@@ -57,7 +57,7 @@ import {
   deleteFile
 } from '../lib/googleDrive';
 import { db } from '../lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 const clinicDataRef = doc(db, 'odontoapp', 'clinic-data');
 
@@ -613,45 +613,56 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const loadData = async () => {
-      const localData = {
-        procedures: JSON.parse(localStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
-        patients: JSON.parse(localStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
-        appointments: JSON.parse(localStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
-      };
-
-      const storedTheme = localStorage.getItem("of_theme");
-      document.body.classList.toggle("light-mode", storedTheme === "light");
+    const localData = {
+      procedures: JSON.parse(localStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
+      patients: JSON.parse(localStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
+      appointments: JSON.parse(localStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
+    };
+    const storedTheme = localStorage.getItem("of_theme");
+    document.body.classList.toggle("light-mode", storedTheme === "light");
+    Promise.resolve().then(() => {
       setProcedures(localData.procedures);
       setPatients(localData.patients);
       setAppointments(localData.appointments);
       setTheme(storedTheme === "light" ? "light" : "dark");
+    });
 
-      try {
-        const snapshot = await getDoc(clinicDataRef);
-        if (snapshot.exists()) {
-          const cloudData = snapshot.data();
-          const procedures = Array.isArray(cloudData.procedures) ? cloudData.procedures : localData.procedures;
-          const patients = Array.isArray(cloudData.patients) ? cloudData.patients : localData.patients;
-          const appointments = Array.isArray(cloudData.appointments) ? cloudData.appointments : localData.appointments;
-
-          localStorage.setItem("of_procedures", JSON.stringify(procedures));
-          localStorage.setItem("of_patients", JSON.stringify(patients));
-          localStorage.setItem("of_appointments", JSON.stringify(appointments));
-          setProcedures(procedures);
-          setPatients(patients);
-          setAppointments(appointments);
-        } else {
-          await setDoc(clinicDataRef, localData);
+    let migrationStarted = false;
+    const unsubscribeFromCloud = onSnapshot(
+      clinicDataRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          if (!migrationStarted) {
+            migrationStarted = true;
+            void setDoc(clinicDataRef, localData).catch((error) => {
+              console.warn("Não foi possível migrar o cache local para o Firestore.", error);
+            });
+          }
+          return;
         }
+
+        const cloudData = snapshot.data();
+        const procedures = Array.isArray(cloudData.procedures) ? cloudData.procedures : [];
+        const patients = Array.isArray(cloudData.patients) ? cloudData.patients : [];
+        const appointments = Array.isArray(cloudData.appointments) ? cloudData.appointments : [];
+
+        localStorage.setItem("of_procedures", JSON.stringify(procedures));
+        localStorage.setItem("of_patients", JSON.stringify(patients));
+        localStorage.setItem("of_appointments", JSON.stringify(appointments));
+        setProcedures(procedures);
+        setPatients(patients);
+        setAppointments(appointments);
         setCloudSyncEnabled(true);
-      } catch (error) {
-        console.warn("Firestore indisponível; os dados locais continuarão disponíveis e serão sincronizados quando a conexão retornar.", error);
+      },
+      (error) => {
+        console.warn("A sincronização em tempo real está indisponível; o cache local continuará disponível.", error);
         setCloudSyncEnabled(false);
       }
-    };
+    );
 
-    void loadData();
+    return () => {
+      unsubscribeFromCloud?.();
+    };
   }, []);
 
   const saveData = async (key: string, data: any) => {
