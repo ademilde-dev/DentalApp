@@ -1,13 +1,16 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, persistentLocalCache } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Safe standard client-side Firebase initialization
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const shouldInitializeApp = getApps().length === 0;
+const app = shouldInitializeApp ? initializeApp(firebaseConfig) : getApp();
 
-// Use the database name specified in config
-const db = getFirestore(app);
+// Keep Firestore writes available offline and synchronize them when connectivity returns.
+const db = shouldInitializeApp
+  ? initializeFirestore(app, { localCache: persistentLocalCache() })
+  : getFirestore(app);
 const auth = getAuth(app);
 
 export { app, db, auth };

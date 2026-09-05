@@ -646,7 +646,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
         }
         setCloudSyncEnabled(true);
       } catch (error) {
-        console.error("Não foi possível carregar os dados persistidos no Firestore.", error);
+        console.warn("Firestore indisponível; os dados locais continuarão disponíveis e serão sincronizados quando a conexão retornar.", error);
         setCloudSyncEnabled(false);
       }
     };
@@ -656,8 +656,6 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
 
   const saveData = async (key: string, data: any) => {
     localStorage.setItem(key, JSON.stringify(data));
-
-    if (!cloudSyncEnabled) return;
 
     const fieldByStorageKey: Record<string, "patients" | "appointments" | "procedures"> = {
       of_patients: "patients",
@@ -669,9 +667,9 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
 
     try {
       await setDoc(clinicDataRef, { [field]: data }, { merge: true });
+      setCloudSyncEnabled(true);
     } catch (error) {
-      console.error(`Falha ao salvar ${field} no Firestore.`, error);
-      triggerAlert("Falha na Persistência", "Os dados foram mantidos neste navegador, mas não foi possível sincronizá-los com a base de dados.");
+      console.warn(`Firestore indisponível para salvar ${field}; o cache local foi preservado.`, error);
     }
   };
 
