@@ -252,6 +252,18 @@ body.light-mode .light-icon { display: block; }
     gap: 1.25rem;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Remove duplicate "Cadastrar Paciente" button shown inside the Patients tab.
+   Keep only the header button (#quick-patient-btn) next to "Agendar Consulta". */
+#patients-tab .action-bar .btn.btn-primary {
+    display: none !important;
+}
+
 .header-logo {
     width: 52px;
     height: 52px;

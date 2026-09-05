@@ -1093,6 +1093,10 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
             </div>
           </div>
           <div className="header-actions">
+            <button id="quick-patient-btn" className="btn btn-primary" onClick={() => openPatientModal()}>
+              <UserPlus />
+              <span>Cadastrar Paciente</span>
+            </button>
             <button id="quick-appointment-btn" className="btn btn-primary" onClick={() => openAppointmentModal()}>
               <CalendarPlus />
               <span>Agendar Consulta</span>
@@ -1351,9 +1355,6 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                 <Search className="search-icon" />
                 <input type="text" id="patients-search-input" placeholder="Buscar pacientes por nome, CPF ou e-mail..." value={patientsSearchInput} onChange={(e) => setPatientsSearchInput(e.target.value)} />
               </div>
-              <button id="add-patient-btn" className="btn btn-primary" onClick={() => openPatientModal()}>
-                <UserPlus /> Cadastrar Paciente
-              </button>
             </div>
 
             <div className="card table-card">
