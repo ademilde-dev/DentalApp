@@ -56,6 +56,10 @@ import {
   downloadFileContent,
   deleteFile
 } from '../lib/googleDrive';
+import { db } from '../lib/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+const clinicDataRef = doc(db, 'odontoapp', 'clinic-data');
 
 // ==========================================================================
 // DADOS MOCKADOS INICIAIS
@@ -163,6 +167,7 @@ export default function Page() {
   const [patients, setPatients] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [procedures, setProcedures] = useState<any[]>([]);
+  const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [liveDateTime, setLiveDateTime] = useState<Date | null>(null);
 
@@ -606,39 +611,68 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   // INICIALIZAÇÃO DE DADOS
   // ==========================================================================
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (!localStorage.getItem("of_procedures")) {
-        localStorage.setItem("of_procedures", JSON.stringify(mockProcedures));
-      }
-      if (!localStorage.getItem("of_patients")) {
-        localStorage.setItem("of_patients", JSON.stringify(mockPatients));
-      }
-      if (!localStorage.getItem("of_appointments")) {
-        localStorage.setItem("of_appointments", JSON.stringify(mockAppointments));
-      }
+    if (typeof window === "undefined") return;
 
-      const localProcs = JSON.parse(localStorage.getItem("of_procedures") || "[]");
-      const localPats = JSON.parse(localStorage.getItem("of_patients") || "[]");
-      const localAppts = JSON.parse(localStorage.getItem("of_appointments") || "[]");
+    const loadData = async () => {
+      const localData = {
+        procedures: JSON.parse(localStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
+        patients: JSON.parse(localStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
+        appointments: JSON.parse(localStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
+      };
 
       const storedTheme = localStorage.getItem("of_theme");
-      if (storedTheme === "light") {
-        document.body.classList.add("light-mode");
-      } else {
-        document.body.classList.remove("light-mode");
-      }
+      document.body.classList.toggle("light-mode", storedTheme === "light");
+      setProcedures(localData.procedures);
+      setPatients(localData.patients);
+      setAppointments(localData.appointments);
+      setTheme(storedTheme === "light" ? "light" : "dark");
 
-      Promise.resolve().then(() => {
-        setProcedures(localProcs);
-        setPatients(localPats);
-        setAppointments(localAppts);
-        setTheme(storedTheme === "light" ? "light" : "dark");
-      });
-    }
+      try {
+        const snapshot = await getDoc(clinicDataRef);
+        if (snapshot.exists()) {
+          const cloudData = snapshot.data();
+          const procedures = Array.isArray(cloudData.procedures) ? cloudData.procedures : localData.procedures;
+          const patients = Array.isArray(cloudData.patients) ? cloudData.patients : localData.patients;
+          const appointments = Array.isArray(cloudData.appointments) ? cloudData.appointments : localData.appointments;
+
+          localStorage.setItem("of_procedures", JSON.stringify(procedures));
+          localStorage.setItem("of_patients", JSON.stringify(patients));
+          localStorage.setItem("of_appointments", JSON.stringify(appointments));
+          setProcedures(procedures);
+          setPatients(patients);
+          setAppointments(appointments);
+        } else {
+          await setDoc(clinicDataRef, localData);
+        }
+        setCloudSyncEnabled(true);
+      } catch (error) {
+        console.error("Não foi possível carregar os dados persistidos no Firestore.", error);
+        setCloudSyncEnabled(false);
+      }
+    };
+
+    void loadData();
   }, []);
 
-  const saveData = (key: string, data: any) => {
+  const saveData = async (key: string, data: any) => {
     localStorage.setItem(key, JSON.stringify(data));
+
+    if (!cloudSyncEnabled) return;
+
+    const fieldByStorageKey: Record<string, "patients" | "appointments" | "procedures"> = {
+      of_patients: "patients",
+      of_appointments: "appointments",
+      of_procedures: "procedures"
+    };
+    const field = fieldByStorageKey[key];
+    if (!field) return;
+
+    try {
+      await setDoc(clinicDataRef, { [field]: data }, { merge: true });
+    } catch (error) {
+      console.error(`Falha ao salvar ${field} no Firestore.`, error);
+      triggerAlert("Falha na Persistência", "Os dados foram mantidos neste navegador, mas não foi possível sincronizá-los com a base de dados.");
+    }
   };
 
   // ==========================================================================
