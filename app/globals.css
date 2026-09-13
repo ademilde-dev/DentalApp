@@ -920,7 +920,7 @@ body:not(.light-mode) .form-select option {
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
     z-index: 100;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     opacity: 0;
@@ -929,6 +929,7 @@ body:not(.light-mode) .form-select option {
 }
 
 .modal-overlay.active {
+    display: flex;
     opacity: 1;
     pointer-events: auto;
 }

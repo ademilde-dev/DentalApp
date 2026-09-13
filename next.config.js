@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  allowedDevOrigins: ['**.run.app', '*.run.app', 'localhost', '127.0.0.1'],
   reactStrictMode: true,
   typescript: {
     ignoreBuildErrors: false,

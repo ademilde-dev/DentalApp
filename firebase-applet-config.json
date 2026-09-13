@@ -3,7 +3,10 @@
   "appId": "1:425850478980:web:c4e6ffd4e43513efef7dd1",
   "apiKey": "AIzaSyBshhp1RlYht9wM_OdrVdbEGXLfIW8Jg-A",
   "authDomain": "gen-lang-client-0146642090.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-odontoapp-c0b3e155-7d67-4136-9bfe-9a9f78c14ff3",
   "storageBucket": "gen-lang-client-0146642090.firebasestorage.app",
   "messagingSenderId": "425850478980",
-  "measurementId": ""
+  "measurementId": "",
+  "oAuthClientId": "425850478980-du4riib0a2r2qr1b7l3tdrgnb4v8fch3.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

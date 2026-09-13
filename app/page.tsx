@@ -160,13 +160,46 @@ const formatDate = (dateStr: string) => {
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
 };
 
+// Safe storage wrapper that prevents crashes in cross-origin / sandboxed iframes
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        return window.localStorage.getItem(key);
+      }
+    } catch {
+      // Access denied or not supported in sandbox
+    }
+    return null;
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(key, value);
+      }
+    } catch {
+      // Access denied or quota exceeded
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // Access denied
+    }
+  }
+};
+
 export default function Page() {
   // ==========================================================================
   // ESTADOS PRINCIPAIS
   // ==========================================================================
-  const [patients, setPatients] = useState<any[]>([]);
-  const [appointments, setAppointments] = useState<any[]>([]);
-  const [procedures, setProcedures] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>(mockPatients);
+  const [appointments, setAppointments] = useState<any[]>(mockAppointments);
+  const [procedures, setProcedures] = useState<any[]>(mockProcedures);
+
   const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [liveDateTime, setLiveDateTime] = useState<Date | null>(null);
@@ -367,9 +400,9 @@ export default function Page() {
     }
     setDriveLoading(true);
     try {
-      const localProcs = JSON.parse(localStorage.getItem("of_procedures") || "[]");
-      const localPats = JSON.parse(localStorage.getItem("of_patients") || "[]");
-      const localAppts = JSON.parse(localStorage.getItem("of_appointments") || "[]");
+      const localProcs = JSON.parse(safeStorage.getItem("of_procedures") || "[]");
+      const localPats = JSON.parse(safeStorage.getItem("of_patients") || "[]");
+      const localAppts = JSON.parse(safeStorage.getItem("of_appointments") || "[]");
 
       const backupObj = {
         version: "1.0",
@@ -415,9 +448,9 @@ export default function Page() {
             throw new Error("Arquivo de backup inválido ou incompatível.");
           }
 
-          localStorage.setItem("of_patients", JSON.stringify(backupObj.patients));
-          localStorage.setItem("of_appointments", JSON.stringify(backupObj.appointments));
-          localStorage.setItem("of_procedures", JSON.stringify(backupObj.procedures));
+          safeStorage.setItem("of_patients", JSON.stringify(backupObj.patients));
+          safeStorage.setItem("of_appointments", JSON.stringify(backupObj.appointments));
+          safeStorage.setItem("of_procedures", JSON.stringify(backupObj.procedures));
 
           setPatients(backupObj.patients);
           setAppointments(backupObj.appointments);
@@ -614,11 +647,11 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     if (typeof window === "undefined") return;
 
     const localData = {
-      procedures: JSON.parse(localStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
-      patients: JSON.parse(localStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
-      appointments: JSON.parse(localStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
+      procedures: JSON.parse(safeStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
+      patients: JSON.parse(safeStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
+      appointments: JSON.parse(safeStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
     };
-    const storedTheme = localStorage.getItem("of_theme");
+    const storedTheme = safeStorage.getItem("of_theme");
     document.body.classList.toggle("light-mode", storedTheme === "light");
     Promise.resolve().then(() => {
       setProcedures(localData.procedures);
@@ -628,37 +661,42 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     });
 
     let migrationStarted = false;
-    const unsubscribeFromCloud = onSnapshot(
-      clinicDataRef,
-      (snapshot) => {
-        if (!snapshot.exists()) {
-          if (!migrationStarted) {
-            migrationStarted = true;
-            void setDoc(clinicDataRef, localData).catch((error) => {
-              console.warn("Não foi possível migrar o cache local para o Firestore.", error);
-            });
+    let unsubscribeFromCloud: (() => void) | undefined;
+    try {
+      unsubscribeFromCloud = onSnapshot(
+        clinicDataRef,
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            if (!migrationStarted) {
+              migrationStarted = true;
+              void setDoc(clinicDataRef, localData).catch((error) => {
+                console.warn("Não foi possível migrar o cache local para o Firestore.", error);
+              });
+            }
+            return;
           }
-          return;
+
+          const cloudData = snapshot.data();
+          const procedures = Array.isArray(cloudData.procedures) ? cloudData.procedures : [];
+          const patients = Array.isArray(cloudData.patients) ? cloudData.patients : [];
+          const appointments = Array.isArray(cloudData.appointments) ? cloudData.appointments : [];
+
+          safeStorage.setItem("of_procedures", JSON.stringify(procedures));
+          safeStorage.setItem("of_patients", JSON.stringify(patients));
+          safeStorage.setItem("of_appointments", JSON.stringify(appointments));
+          setProcedures(procedures);
+          setPatients(patients);
+          setAppointments(appointments);
+          setCloudSyncEnabled(true);
+        },
+        (error) => {
+          console.warn("A sincronização em tempo real está indisponível; o cache local continuará disponível.", error);
+          setCloudSyncEnabled(false);
         }
-
-        const cloudData = snapshot.data();
-        const procedures = Array.isArray(cloudData.procedures) ? cloudData.procedures : [];
-        const patients = Array.isArray(cloudData.patients) ? cloudData.patients : [];
-        const appointments = Array.isArray(cloudData.appointments) ? cloudData.appointments : [];
-
-        localStorage.setItem("of_procedures", JSON.stringify(procedures));
-        localStorage.setItem("of_patients", JSON.stringify(patients));
-        localStorage.setItem("of_appointments", JSON.stringify(appointments));
-        setProcedures(procedures);
-        setPatients(patients);
-        setAppointments(appointments);
-        setCloudSyncEnabled(true);
-      },
-      (error) => {
-        console.warn("A sincronização em tempo real está indisponível; o cache local continuará disponível.", error);
-        setCloudSyncEnabled(false);
-      }
-    );
+      );
+    } catch (err) {
+      console.warn("Falha ao inicializar listener do Firestore:", err);
+    }
 
     return () => {
       unsubscribeFromCloud?.();
@@ -666,7 +704,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   }, []);
 
   const saveData = async (key: string, data: any) => {
-    localStorage.setItem(key, JSON.stringify(data));
+    safeStorage.setItem(key, JSON.stringify(data));
 
     const fieldByStorageKey: Record<string, "patients" | "appointments" | "procedures"> = {
       of_patients: "patients",
@@ -690,7 +728,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   const handleToggleTheme = () => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
-    localStorage.setItem("of_theme", nextTheme);
+    safeStorage.setItem("of_theme", nextTheme);
     if (nextTheme === "light") {
       document.body.classList.add("light-mode");
     } else {
@@ -1136,6 +1174,36 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
             </div>
           </div>
           <div className="header-actions">
+            <div
+              id="firebase-status-badge"
+              title={cloudSyncEnabled ? "Conectado ao Firebase Firestore com sincronização em nuvem ativa" : "Conectando ao Firebase Firestore... Operando com cache seguro"}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.4rem 0.8rem',
+                borderRadius: '9999px',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                backgroundColor: cloudSyncEnabled ? 'rgba(34, 197, 94, 0.12)' : 'rgba(234, 179, 8, 0.12)',
+                color: cloudSyncEnabled ? '#22c55e' : '#eab308',
+                border: `1px solid ${cloudSyncEnabled ? 'rgba(34, 197, 94, 0.35)' : 'rgba(234, 179, 8, 0.35)'}`,
+                letterSpacing: '0.02em',
+                userSelect: 'none'
+              }}
+            >
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: cloudSyncEnabled ? '#22c55e' : '#eab308',
+                  boxShadow: cloudSyncEnabled ? '0 0 8px #22c55e' : '0 0 8px #eab308',
+                  display: 'inline-block'
+                }}
+              />
+              <span>{cloudSyncEnabled ? "Firebase Nuvem Ativo" : "Sincronizando..."}</span>
+            </div>
             <button id="quick-patient-btn" className="btn btn-primary" onClick={() => openPatientModal()}>
               <UserPlus />
               <span>Cadastrar Paciente</span>
@@ -1195,7 +1263,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
                   </span>
-                  <span>{liveDateTime ? `${liveDateTime.toLocaleDateString('pt-BR')} • ${liveDateTime.toLocaleTimeString('pt-BR')}` : '--/--/---- • --:--:--'}</span>
+                  <span suppressHydrationWarning>{liveDateTime ? `${liveDateTime.toLocaleDateString('pt-BR')} • ${liveDateTime.toLocaleTimeString('pt-BR')}` : '--/--/---- • --:--:--'}</span>
                 </div>
               </div>
               <div className="stat-card">
@@ -1762,356 +1830,366 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       {/* ================= MODAIS ================= */}
 
       {/* Modal: Cadastro/Edição de Paciente */}
-      <div id="patient-modal" className={`modal-overlay ${isPatientModalActive ? 'active' : ''}`} onClick={(e) => e.target === e.currentTarget && setIsPatientModalActive(false)}>
-        <div className="modal modal-lg">
-          <div className="modal-header">
-            <h3 id="patient-modal-title">{editingPatient ? "Editar Cadastro de Paciente" : "Cadastrar Novo Paciente"}</h3>
-            <button className="btn-close-modal" onClick={() => setIsPatientModalActive(false)}><X /></button>
-          </div>
-          <form id="patient-form" onSubmit={handleSubmitPatient}>
-            <div className="modal-body modal-scrollable">
-              <h4 className="form-section-title">Dados Pessoais</h4>
-              <div className="form-row">
-                <div className="form-group col-2">
-                  <label htmlFor="patient-name">Nome Completo *</label>
-                  <input type="text" id="patient-name" className="form-control" required placeholder="Ex: João da Silva" value={pName} onChange={(e) => setPName(e.target.value)} />
+      {isPatientModalActive && (
+        <div id="patient-modal" className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && setIsPatientModalActive(false)}>
+          <div className="modal modal-lg">
+            <div className="modal-header">
+              <h3 id="patient-modal-title">{editingPatient ? "Editar Cadastro de Paciente" : "Cadastrar Novo Paciente"}</h3>
+              <button className="btn-close-modal" onClick={() => setIsPatientModalActive(false)}><X /></button>
+            </div>
+            <form id="patient-form" onSubmit={handleSubmitPatient}>
+              <div className="modal-body modal-scrollable">
+                <h4 className="form-section-title">Dados Pessoais</h4>
+                <div className="form-row">
+                  <div className="form-group col-2">
+                    <label htmlFor="patient-name">Nome Completo *</label>
+                    <input type="text" id="patient-name" className="form-control" required placeholder="Ex: João da Silva" value={pName} onChange={(e) => setPName(e.target.value)} />
+                  </div>
+                  <div className="form-group col">
+                    <label htmlFor="patient-cpf">CPF *</label>
+                    <input type="text" id="patient-cpf" className="form-control" required placeholder="Ex: 000.000.000-00" value={pCpf} onChange={(e) => setPCpf(e.target.value)} />
+                  </div>
                 </div>
-                <div className="form-group col">
-                  <label htmlFor="patient-cpf">CPF *</label>
-                  <input type="text" id="patient-cpf" className="form-control" required placeholder="Ex: 000.000.000-00" value={pCpf} onChange={(e) => setPCpf(e.target.value)} />
+                <div className="form-row">
+                  <div className="form-group col">
+                    <label htmlFor="patient-dob">Data de Nascimento *</label>
+                    <input type="date" id="patient-dob" className="form-control" required value={pDob} onChange={(e) => setPDob(e.target.value)} />
+                  </div>
+                  <div className="form-group col">
+                    <label htmlFor="patient-gender">Gênero *</label>
+                    <select id="patient-gender" className="form-select" required value={pGender} onChange={(e) => setPGender(e.target.value)}>
+                      <option value="">Selecione...</option>
+                      <option value="Masculino">Masculino</option>
+                      <option value="Feminino">Feminino</option>
+                      <option value="Outro">Outro</option>
+                    </select>
+                  </div>
+                  <div className="form-group col">
+                    <label htmlFor="patient-phone">Telefone/WhatsApp *</label>
+                    <input type="tel" id="patient-phone" className="form-control" required placeholder="Ex: (11) 99999-9999" value={pPhone} onChange={(e) => setPPhone(e.target.value)} />
+                  </div>
                 </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group col">
-                  <label htmlFor="patient-dob">Data de Nascimento *</label>
-                  <input type="date" id="patient-dob" className="form-control" required value={pDob} onChange={(e) => setPDob(e.target.value)} />
+                <div className="form-group">
+                  <label htmlFor="patient-email">E-mail *</label>
+                  <input type="email" id="patient-email" className="form-control" required placeholder="Ex: joao@email.com" value={pEmail} onChange={(e) => setPEmail(e.target.value)} />
                 </div>
-                <div className="form-group col">
-                  <label htmlFor="patient-gender">Gênero *</label>
-                  <select id="patient-gender" className="form-select" required value={pGender} onChange={(e) => setPGender(e.target.value)}>
-                    <option value="">Selecione...</option>
-                    <option value="Masculino">Masculino</option>
-                    <option value="Feminino">Feminino</option>
-                    <option value="Outro">Outro</option>
-                  </select>
-                </div>
-                <div className="form-group col">
-                  <label htmlFor="patient-phone">Telefone/WhatsApp *</label>
-                  <input type="tel" id="patient-phone" className="form-control" required placeholder="Ex: (11) 99999-9999" value={pPhone} onChange={(e) => setPPhone(e.target.value)} />
-                </div>
-              </div>
-              <div className="form-group">
-                <label htmlFor="patient-email">E-mail *</label>
-                <input type="email" id="patient-email" className="form-control" required placeholder="Ex: joao@email.com" value={pEmail} onChange={(e) => setPEmail(e.target.value)} />
-              </div>
 
-              <h4 className="form-section-title margin-top">Ficha de Anamnese (Saúde Geral)</h4>
-              <div className="form-row">
-                <div className="form-group col">
-                  <label htmlFor="patient-allergies">Alergias Alimentares / Medicamentosas</label>
-                  <input type="text" id="patient-allergies" className="form-control" placeholder="Ex: Penicilina, Iodo, Corantes... (Deixe em branco se nenhuma)" value={pAllergies} onChange={(e) => setPAllergies(e.target.value)} />
+                <h4 className="form-section-title margin-top">Ficha de Anamnese (Saúde Geral)</h4>
+                <div className="form-row">
+                  <div className="form-group col">
+                    <label htmlFor="patient-allergies">Alergias Alimentares / Medicamentosas</label>
+                    <input type="text" id="patient-allergies" className="form-control" placeholder="Ex: Penicilina, Iodo, Corantes... (Deixe em branco se nenhuma)" value={pAllergies} onChange={(e) => setPAllergies(e.target.value)} />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group col-checkbox">
+                    <label className="checkbox-container">
+                      <input type="checkbox" id="patient-hypertension" checked={pHypertension} onChange={(e) => setPHypertension(e.target.checked)} />
+                      <span className="checkmark"></span>
+                      Paciente Hipertenso
+                    </label>
+                  </div>
+                  <div className="form-group col-checkbox">
+                    <label className="checkbox-container">
+                      <input type="checkbox" id="patient-diabetes" checked={pDiabetes} onChange={(e) => setPDiabetes(e.target.checked)} />
+                      <span className="checkmark"></span>
+                      Paciente Diabético
+                    </label>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="patient-meds">Medicamentos em Uso Contínuo</label>
+                  <input type="text" id="patient-meds" className="form-control" placeholder="Ex: AAS, Losartana... (Deixe em branco se nenhum)" value={pMeds} onChange={(e) => setPMeds(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="patient-anamnese-notes">Outras Observações Médicas</label>
+                  <textarea id="patient-anamnese-notes" className="form-control" rows={2} placeholder="Observações importantes sobre a saúde do paciente..." value={pAnamneseNotes} onChange={(e) => setPAnamneseNotes(e.target.value)}></textarea>
                 </div>
               </div>
-              <div className="form-row">
-                <div className="form-group col-checkbox">
-                  <label className="checkbox-container">
-                    <input type="checkbox" id="patient-hypertension" checked={pHypertension} onChange={(e) => setPHypertension(e.target.checked)} />
-                    <span className="checkmark"></span>
-                    Paciente Hipertenso
-                  </label>
-                </div>
-                <div className="form-group col-checkbox">
-                  <label className="checkbox-container">
-                    <input type="checkbox" id="patient-diabetes" checked={pDiabetes} onChange={(e) => setPDiabetes(e.target.checked)} />
-                    <span className="checkmark"></span>
-                    Paciente Diabético
-                  </label>
-                </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsPatientModalActive(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary">Salvar Paciente</button>
               </div>
-              <div className="form-group">
-                <label htmlFor="patient-meds">Medicamentos em Uso Contínuo</label>
-                <input type="text" id="patient-meds" className="form-control" placeholder="Ex: AAS, Losartana... (Deixe em branco se nenhum)" value={pMeds} onChange={(e) => setPMeds(e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label htmlFor="patient-anamnese-notes">Outras Observações Médicas</label>
-                <textarea id="patient-anamnese-notes" className="form-control" rows={2} placeholder="Observações importantes sobre a saúde do paciente..." value={pAnamneseNotes} onChange={(e) => setPAnamneseNotes(e.target.value)}></textarea>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setIsPatientModalActive(false)}>Cancelar</button>
-              <button type="submit" className="btn btn-primary">Salvar Paciente</button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Modal: Agendamento / Edição de Consulta */}
-      <div id="appointment-modal" className={`modal-overlay ${isAppointmentModalActive ? 'active' : ''}`} onClick={(e) => e.target === e.currentTarget && setIsAppointmentModalActive(false)}>
-        <div className="modal">
-          <div className="modal-header">
-            <h3 id="appointment-modal-title">{editingAppointment ? "Editar Consulta" : "Agendar Nova Consulta"}</h3>
-            <button className="btn-close-modal" onClick={() => setIsAppointmentModalActive(false)}><X /></button>
-          </div>
-          <form id="appointment-form" onSubmit={handleSubmitAppointment}>
-            <div className="modal-body">
-              <div className="form-group">
-                <label htmlFor="appointment-patient">Selecionar Paciente *</label>
-                <select id="appointment-patient" className="form-select" required value={appPatient} onChange={(e) => setAppPatient(e.target.value)}>
-                  <option value="">Selecione um paciente...</option>
-                  {patients
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map(p => (
-                      <option key={p.id} value={p.id}>{p.name} (CPF: {p.cpf})</option>
-                    ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label htmlFor="appointment-dentist">Dentista Responsável *</label>
-                <select id="appointment-dentist" className="form-select" required value={appDentist} onChange={(e) => setAppDentist(e.target.value)}>
-                  <option value="">Selecione um dentista...</option>
-                  <option value="Dra. Fabíola Monteiro">Dra. Fabíola Monteiro (Ortodontia & Estética)</option>
-                  <option value="Dr. Carlos Silva">Dr. Carlos Silva (Clínico Geral)</option>
-                  <option value="Dr. Mateus Santos">Dr. Mateus Santos (Endodontista)</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label htmlFor="appointment-procedure">Procedimento *</label>
-                <select id="appointment-procedure" className="form-select" required value={appProcedure} onChange={(e) => setAppProcedure(e.target.value)}>
-                  <option value="">Selecione um procedimento...</option>
-                  {procedures
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map(pr => (
-                      <option key={pr.id} value={pr.id}>{pr.name} (R$ {pr.price.toFixed(2)})</option>
-                    ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <div className="form-group col">
-                  <label htmlFor="appointment-date">Data da Consulta *</label>
-                  <input type="date" id="appointment-date" className="form-control" required value={appDate} onChange={(e) => setAppDate(e.target.value)} />
+      {isAppointmentModalActive && (
+        <div id="appointment-modal" className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && setIsAppointmentModalActive(false)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h3 id="appointment-modal-title">{editingAppointment ? "Editar Consulta" : "Agendar Nova Consulta"}</h3>
+              <button className="btn-close-modal" onClick={() => setIsAppointmentModalActive(false)}><X /></button>
+            </div>
+            <form id="appointment-form" onSubmit={handleSubmitAppointment}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label htmlFor="appointment-patient">Selecionar Paciente *</label>
+                  <select id="appointment-patient" className="form-select" required value={appPatient} onChange={(e) => setAppPatient(e.target.value)}>
+                    <option value="">Selecione um paciente...</option>
+                    {patients
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(p => (
+                        <option key={p.id} value={p.id}>{p.name} (CPF: {p.cpf})</option>
+                      ))}
+                  </select>
                 </div>
-                <div className="form-group col">
-                  <label htmlFor="appointment-time">Horário *</label>
-                  <select id="appointment-time" className="form-select" required value={appTime} onChange={(e) => setAppTime(e.target.value)}>
-                    <option value="">Selecione...</option>
-                    <option value="08:00">08:00</option>
-                    <option value="08:30">08:30</option>
-                    <option value="09:00">09:00</option>
-                    <option value="09:30">09:30</option>
-                    <option value="10:00">10:00</option>
-                    <option value="10:30">10:30</option>
-                    <option value="11:00">11:00</option>
-                    <option value="11:30">11:30</option>
-                    <option value="13:30">13:30</option>
-                    <option value="14:00">14:00</option>
-                    <option value="14:30">14:30</option>
-                    <option value="15:00">15:00</option>
-                    <option value="15:30">15:30</option>
-                    <option value="16:00">16:00</option>
-                    <option value="16:30">16:30</option>
-                    <option value="17:00">17:00</option>
+                <div className="form-group">
+                  <label htmlFor="appointment-dentist">Dentista Responsável *</label>
+                  <select id="appointment-dentist" className="form-select" required value={appDentist} onChange={(e) => setAppDentist(e.target.value)}>
+                    <option value="">Selecione um dentista...</option>
+                    <option value="Dra. Fabíola Monteiro">Dra. Fabíola Monteiro (Ortodontia & Estética)</option>
+                    <option value="Dr. Carlos Silva">Dr. Carlos Silva (Clínico Geral)</option>
+                    <option value="Dr. Mateus Santos">Dr. Mateus Santos (Endodontista)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="appointment-procedure">Procedimento *</label>
+                  <select id="appointment-procedure" className="form-select" required value={appProcedure} onChange={(e) => setAppProcedure(e.target.value)}>
+                    <option value="">Selecione um procedimento...</option>
+                    {procedures
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(pr => (
+                        <option key={pr.id} value={pr.id}>{pr.name} (R$ {pr.price.toFixed(2)})</option>
+                      ))}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <div className="form-group col">
+                    <label htmlFor="appointment-date">Data da Consulta *</label>
+                    <input type="date" id="appointment-date" className="form-control" required value={appDate} onChange={(e) => setAppDate(e.target.value)} />
+                  </div>
+                  <div className="form-group col">
+                    <label htmlFor="appointment-time">Horário *</label>
+                    <select id="appointment-time" className="form-select" required value={appTime} onChange={(e) => setAppTime(e.target.value)}>
+                      <option value="">Selecione...</option>
+                      <option value="08:00">08:00</option>
+                      <option value="08:30">08:30</option>
+                      <option value="09:00">09:00</option>
+                      <option value="09:30">09:30</option>
+                      <option value="10:00">10:00</option>
+                      <option value="10:30">10:30</option>
+                      <option value="11:00">11:00</option>
+                      <option value="11:30">11:30</option>
+                      <option value="13:30">13:30</option>
+                      <option value="14:00">14:00</option>
+                      <option value="14:30">14:30</option>
+                      <option value="15:00">15:00</option>
+                      <option value="15:30">15:30</option>
+                      <option value="16:00">16:00</option>
+                      <option value="16:30">16:30</option>
+                      <option value="17:00">17:00</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="appointment-status">Status do Agendamento *</label>
+                  <select id="appointment-status" className="form-select" required value={appStatus} onChange={(e) => setAppStatus(e.target.value)}>
+                    <option value="scheduled">Agendado</option>
+                    <option value="confirmed">Confirmado</option>
+                    <option value="completed">Concluído</option>
+                    <option value="canceled">Cancelado</option>
                   </select>
                 </div>
               </div>
-              <div className="form-group">
-                <label htmlFor="appointment-status">Status do Agendamento *</label>
-                <select id="appointment-status" className="form-select" required value={appStatus} onChange={(e) => setAppStatus(e.target.value)}>
-                  <option value="scheduled">Agendado</option>
-                  <option value="confirmed">Confirmado</option>
-                  <option value="completed">Concluído</option>
-                  <option value="canceled">Cancelado</option>
-                </select>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsAppointmentModalActive(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary">Confirmar Agendamento</button>
               </div>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setIsAppointmentModalActive(false)}>Cancelar</button>
-              <button type="submit" className="btn btn-primary">Confirmar Agendamento</button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Modal: Adicionar/Editar Procedimento */}
-      <div id="procedure-modal" className={`modal-overlay ${isProcedureModalActive ? 'active' : ''}`} onClick={(e) => e.target === e.currentTarget && setIsProcedureModalActive(false)}>
-        <div className="modal">
-          <div className="modal-header">
-            <h3 id="procedure-modal-title">{editingProcedure ? "Editar Procedimento" : "Cadastrar Novo Procedimento"}</h3>
-            <button className="btn-close-modal" onClick={() => setIsProcedureModalActive(false)}><X /></button>
+      {isProcedureModalActive && (
+        <div id="procedure-modal" className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && setIsProcedureModalActive(false)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h3 id="procedure-modal-title">{editingProcedure ? "Editar Procedimento" : "Cadastrar Novo Procedimento"}</h3>
+              <button className="btn-close-modal" onClick={() => setIsProcedureModalActive(false)}><X /></button>
+            </div>
+            <form id="procedure-form" onSubmit={handleSubmitProcedure}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label htmlFor="procedure-name">Nome do Procedimento *</label>
+                  <input type="text" id="procedure-name" className="form-control" required placeholder="Ex: Clareamento Dental" value={procName} onChange={(e) => setProcName(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="procedure-price">Valor Padrão (R$) *</label>
+                  <input type="number" id="procedure-price" className="form-control" required min="0" step="0.01" placeholder="Ex: 350.00" value={procPrice} onChange={(e) => setProcPrice(e.target.value)} />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsProcedureModalActive(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary">Salvar</button>
+              </div>
+            </form>
           </div>
-          <form id="procedure-form" onSubmit={handleSubmitProcedure}>
-            <div className="modal-body">
-              <div className="form-group">
-                <label htmlFor="procedure-name">Nome do Procedimento *</label>
-                <input type="text" id="procedure-name" className="form-control" required placeholder="Ex: Clareamento Dental" value={procName} onChange={(e) => setProcName(e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label htmlFor="procedure-price">Valor Padrão (R$) *</label>
-                <input type="number" id="procedure-price" className="form-control" required min="0" step="0.01" placeholder="Ex: 350.00" value={procPrice} onChange={(e) => setProcPrice(e.target.value)} />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setIsProcedureModalActive(false)}>Cancelar</button>
-              <button type="submit" className="btn btn-primary">Salvar</button>
-            </div>
-          </form>
         </div>
-      </div>
+      )}
 
       {/* Modal: Prontuário Completo do Paciente */}
-      <div id="patient-profile-modal" className={`modal-overlay ${isPatientProfileModalActive ? 'active' : ''}`} onClick={(e) => e.target === e.currentTarget && setIsPatientProfileModalActive(false)}>
-        <div className="modal modal-lg">
-          <div className="modal-header">
-            <h3>Prontuário e Ficha Clínica</h3>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginLeft: 'auto', marginRight: '1rem' }}>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => exportPatientCardToDrive(viewingPatient)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', border: '1px solid var(--primary-color)', color: 'var(--primary-color)' }}
-                title="Exportar Prontuário Completo para o Google Drive"
-              >
-                <Cloud size={14} /> Exportar para o Drive
-              </button>
+      {isPatientProfileModalActive && (
+        <div id="patient-profile-modal" className="modal-overlay active" onClick={(e) => e.target === e.currentTarget && setIsPatientProfileModalActive(false)}>
+          <div className="modal modal-lg">
+            <div className="modal-header">
+              <h3>Prontuário e Ficha Clínica</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginLeft: 'auto', marginRight: '1rem' }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => exportPatientCardToDrive(viewingPatient)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', border: '1px solid var(--primary-color)', color: 'var(--primary-color)' }}
+                  title="Exportar Prontuário Completo para o Google Drive"
+                >
+                  <Cloud size={14} /> Exportar para o Drive
+                </button>
+              </div>
+              <button className="btn-close-modal" onClick={() => setIsPatientProfileModalActive(false)}><X /></button>
             </div>
-            <button className="btn-close-modal" onClick={() => setIsPatientProfileModalActive(false)}><X /></button>
-          </div>
-          {viewingPatient && (
-            <div className="modal-body modal-scrollable">
-              <div className="profile-header-card">
-                <div className="profile-avatar">
-                  <User />
+            {viewingPatient && (
+              <div className="modal-body modal-scrollable">
+                <div className="profile-header-card">
+                  <div className="profile-avatar">
+                    <User />
+                  </div>
+                  <div className="profile-meta">
+                    <h4 id="profile-patient-name">{viewingPatient.name}</h4>
+                    <p className="text-muted"><span id="profile-patient-gender">{viewingPatient.gender}</span> — Nascimento: <span id="profile-patient-dob">{formatDate(viewingPatient.dob)}</span></p>
+                    <div className="profile-contact">
+                      <span><CreditCard /> CPF: <span id="profile-patient-cpf">{viewingPatient.cpf}</span></span>
+                      <span><Phone /> <span id="profile-patient-phone">{viewingPatient.phone}</span></span>
+                      <span><Mail /> <span id="profile-patient-email">{viewingPatient.email}</span></span>
+                    </div>
+                  </div>
                 </div>
-                <div className="profile-meta">
-                  <h4 id="profile-patient-name">{viewingPatient.name}</h4>
-                  <p className="text-muted"><span id="profile-patient-gender">{viewingPatient.gender}</span> — Nascimento: <span id="profile-patient-dob">{formatDate(viewingPatient.dob)}</span></p>
-                  <div className="profile-contact">
-                    <span><CreditCard /> CPF: <span id="profile-patient-cpf">{viewingPatient.cpf}</span></span>
-                    <span><Phone /> <span id="profile-patient-phone">{viewingPatient.phone}</span></span>
-                    <span><Mail /> <span id="profile-patient-email">{viewingPatient.email}</span></span>
+
+                {/* Alertas e Ficha de Saúde (Anamnese) */}
+                <div className="anamnese-summary-box">
+                  <h5>Anamnese de Saúde Geral</h5>
+                  <ul className="anamnese-list">
+                    <li><strong>Alergias:</strong> <span id="profile-patient-allergies" className={viewingPatient.medicalHistory.allergies ? "text-red" : ""}>{viewingPatient.medicalHistory.allergies || "Nenhuma registrada"}</span></li>
+                    <li><strong>Pressão Arterial:</strong> <span id="profile-patient-hypertension" className={viewingPatient.medicalHistory.hypertension ? "text-orange" : ""}>{viewingPatient.medicalHistory.hypertension ? "Hipertenso ⚠️" : "Normal"}</span></li>
+                    <li><strong>Diabetes:</strong> <span id="profile-patient-diabetes" className={viewingPatient.medicalHistory.diabetes ? "text-orange" : ""}>{viewingPatient.medicalHistory.diabetes ? "Diabético ⚠️" : "Não Diabético"}</span></li>
+                    <li><strong>Medicamentos em uso:</strong> <span id="profile-patient-meds">{viewingPatient.medicalHistory.meds || "Nenhum"}</span></li>
+                    <li><strong>Observações gerais:</strong> <span id="profile-patient-notes">{viewingPatient.medicalHistory.notes || "-"}</span></li>
+                  </ul>
+                </div>
+
+                {/* Histórico de Consultas */}
+                <h4 className="section-subtitle">Histórico de Consultas e Agendamentos</h4>
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Data/Horário</th>
+                        <th>Dentista</th>
+                        <th>Procedimento</th>
+                        <th>Valor</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="profile-appointments-table-body">
+                      {patientAppointmentsInProfile.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="text-muted" style={{ textAlign: "center" }}>Nenhum agendamento para este paciente.</td>
+                        </tr>
+                      ) : (
+                        patientAppointmentsInProfile.map(app => {
+                          const proc = procedures.find(p => p.id === app.procedureId);
+                          return (
+                            <tr key={app.id}>
+                              <td><strong>{formatDate(app.date)}</strong> às {app.time}</td>
+                              <td>{app.dentist}</td>
+                              <td>{proc ? proc.name : "Procedimento Geral"}</td>
+                              <td>R$ {proc ? proc.price.toFixed(2) : "0,00"}</td>
+                              <td><span className={`badge ${statusBadges[app.status]}`}>{statusLabels[app.status]}</span></td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Anotações Clínicas / Evolução */}
+                <h4 className="section-subtitle margin-top font-semibold text-lg">Evolução Clínica / Notas do Dentista</h4>
+                <div className="clinical-evolution-box">
+                  <textarea id="profile-clinical-notes" className="form-control" rows={4} placeholder="Adicione notas de evolução clínica do paciente aqui..." value={clinicalNotes} onChange={(e) => setClinicalNotes(e.target.value)}></textarea>
+                  <div className="clinical-evolution-actions">
+                    <button type="button" id="save-clinical-notes-btn" className="btn btn-primary btn-sm" onClick={handleSaveClinicalNotes}>
+                      <Save /> Salvar Notas Clínicas
+                    </button>
                   </div>
                 </div>
               </div>
-
-              {/* Alertas e Ficha de Saúde (Anamnese) */}
-              <div className="anamnese-summary-box">
-                <h5>Anamnese de Saúde Geral</h5>
-                <ul className="anamnese-list">
-                  <li><strong>Alergias:</strong> <span id="profile-patient-allergies" className={viewingPatient.medicalHistory.allergies ? "text-red" : ""}>{viewingPatient.medicalHistory.allergies || "Nenhuma registrada"}</span></li>
-                  <li><strong>Pressão Arterial:</strong> <span id="profile-patient-hypertension" className={viewingPatient.medicalHistory.hypertension ? "text-orange" : ""}>{viewingPatient.medicalHistory.hypertension ? "Hipertenso ⚠️" : "Normal"}</span></li>
-                  <li><strong>Diabetes:</strong> <span id="profile-patient-diabetes" className={viewingPatient.medicalHistory.diabetes ? "text-orange" : ""}>{viewingPatient.medicalHistory.diabetes ? "Diabético ⚠️" : "Não Diabético"}</span></li>
-                  <li><strong>Medicamentos em uso:</strong> <span id="profile-patient-meds">{viewingPatient.medicalHistory.meds || "Nenhum"}</span></li>
-                  <li><strong>Observações gerais:</strong> <span id="profile-patient-notes">{viewingPatient.medicalHistory.notes || "-"}</span></li>
-                </ul>
-              </div>
-
-              {/* Histórico de Consultas */}
-              <h4 className="section-subtitle">Histórico de Consultas e Agendamentos</h4>
-              <div className="table-responsive">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Data/Horário</th>
-                      <th>Dentista</th>
-                      <th>Procedimento</th>
-                      <th>Valor</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="profile-appointments-table-body">
-                    {patientAppointmentsInProfile.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="text-muted" style={{ textAlign: "center" }}>Nenhum agendamento para este paciente.</td>
-                      </tr>
-                    ) : (
-                      patientAppointmentsInProfile.map(app => {
-                        const proc = procedures.find(p => p.id === app.procedureId);
-                        return (
-                          <tr key={app.id}>
-                            <td><strong>{formatDate(app.date)}</strong> às {app.time}</td>
-                            <td>{app.dentist}</td>
-                            <td>{proc ? proc.name : "Procedimento Geral"}</td>
-                            <td>R$ {proc ? proc.price.toFixed(2) : "0,00"}</td>
-                            <td><span className={`badge ${statusBadges[app.status]}`}>{statusLabels[app.status]}</span></td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Anotações Clínicas / Evolução */}
-              <h4 className="section-subtitle margin-top font-semibold text-lg">Evolução Clínica / Notas do Dentista</h4>
-              <div className="clinical-evolution-box">
-                <textarea id="profile-clinical-notes" className="form-control" rows={4} placeholder="Adicione notas de evolução clínica do paciente aqui..." value={clinicalNotes} onChange={(e) => setClinicalNotes(e.target.value)}></textarea>
-                <div className="clinical-evolution-actions">
-                  <button type="button" id="save-clinical-notes-btn" className="btn btn-primary btn-sm" onClick={handleSaveClinicalNotes}>
-                    <Save /> Salvar Notas Clínicas
-                  </button>
-                </div>
-              </div>
+            )}
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setIsPatientProfileModalActive(false)}>Fechar</button>
             </div>
-          )}
-          <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" onClick={() => setIsPatientProfileModalActive(false)}>Fechar</button>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Modal Customizado: Alerta / Confirmação */}
-      <div className={`modal-overlay ${customDialog.isOpen ? 'active' : ''}`} style={{ zIndex: 9999 }}>
-        <div className="modal" style={{ maxWidth: '440px', padding: '1.75rem', background: 'var(--bg-modal)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-premium)', borderRadius: '16px', display: 'block' }}>
-          <div className="modal-header" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: 'none', padding: '0 0 1rem 0' }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '2.5rem',
-              height: '2.5rem',
-              borderRadius: '50%',
-              backgroundColor: customDialog.type === 'confirm' ? 'var(--color-danger-translucent, rgba(239, 68, 68, 0.15))' : 'var(--color-primary-translucent, rgba(140, 79, 110, 0.15))',
-              color: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)'
-            }}>
-              {customDialog.type === 'confirm' ? <AlertTriangle size={20} /> : <ShieldCheck size={20} />}
+      {customDialog.isOpen && (
+        <div className="modal-overlay active" style={{ zIndex: 9999 }}>
+          <div className="modal" style={{ maxWidth: '440px', padding: '1.75rem', background: 'var(--bg-modal)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-premium)', borderRadius: '16px', display: 'block' }}>
+            <div className="modal-header" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: 'none', padding: '0 0 1rem 0' }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '2.5rem',
+                height: '2.5rem',
+                borderRadius: '50%',
+                backgroundColor: customDialog.type === 'confirm' ? 'var(--color-danger-translucent, rgba(239, 68, 68, 0.15))' : 'var(--color-primary-translucent, rgba(140, 79, 110, 0.15))',
+                color: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)'
+              }}>
+                {customDialog.type === 'confirm' ? <AlertTriangle size={20} /> : <ShieldCheck size={20} />}
+              </div>
+              <h3 style={{ fontSize: '1.25rem', fontFamily: 'var(--font-sans)', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>
+                {customDialog.title}
+              </h3>
             </div>
-            <h3 style={{ fontSize: '1.25rem', fontFamily: 'var(--font-sans)', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>
-              {customDialog.title}
-            </h3>
-          </div>
-          <div className="modal-body" style={{ padding: '0 0 1.5rem 0', color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: '1.5' }}>
-            <p style={{ margin: 0 }}>{customDialog.message}</p>
-          </div>
-          <div className="modal-footer" style={{ borderTop: 'none', padding: 0, justifyContent: 'flex-end', gap: '0.75rem' }}>
-            {customDialog.type === 'confirm' && (
+            <div className="modal-body" style={{ padding: '0 0 1.5rem 0', color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: '1.5' }}>
+              <p style={{ margin: 0 }}>{customDialog.message}</p>
+            </div>
+            <div className="modal-footer" style={{ borderTop: 'none', padding: 0, justifyContent: 'flex-end', gap: '0.75rem' }}>
+              {customDialog.type === 'confirm' && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeCustomDialog}
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
+                >
+                  {customDialog.cancelText || 'Cancelar'}
+                </button>
+              )}
               <button
                 type="button"
-                className="btn btn-secondary"
-                onClick={closeCustomDialog}
-                style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
+                className="btn btn-primary"
+                onClick={() => {
+                  if (customDialog.type === 'confirm' && customDialog.onConfirm) {
+                    customDialog.onConfirm();
+                  }
+                  closeCustomDialog();
+                }}
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.9rem',
+                  backgroundColor: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)',
+                  borderColor: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)'
+                }}
               >
-                {customDialog.cancelText || 'Cancelar'}
+                {customDialog.confirmText || 'OK'}
               </button>
-            )}
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                if (customDialog.type === 'confirm' && customDialog.onConfirm) {
-                  customDialog.onConfirm();
-                }
-                closeCustomDialog();
-              }}
-              style={{
-                padding: '0.5rem 1rem',
-                fontSize: '0.9rem',
-                backgroundColor: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)',
-                borderColor: customDialog.type === 'confirm' ? 'var(--color-danger, #ef4444)' : 'var(--color-primary)'
-              }}
-            >
-              {customDialog.confirmText || 'OK'}
-            </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
     </div>
   );
