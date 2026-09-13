@@ -908,8 +908,8 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
 
   const handleSubmitPatient = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pName.trim() || !pCpf.trim() || !pDob || !pGender || !pPhone.trim() || !pEmail.trim()) {
-      triggerAlert("Campos Obrigatórios", "Por favor, preencha todos os campos obrigatórios identificados.");
+    if (!pName.trim()) {
+      triggerAlert("Campo Obrigatório", "Por favor, preencha o Nome Completo do paciente.");
       return;
     }
 
@@ -1097,10 +1097,10 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   // Filtragem de Pacientes
   const filteredPatients = patients.filter(p => {
     const query = patientsSearchInput.toLowerCase().trim();
-    return p.name.toLowerCase().includes(query) ||
-      p.cpf.includes(query) ||
-      p.phone.includes(query) ||
-      p.email.toLowerCase().includes(query);
+    return (p.name || "").toLowerCase().includes(query) ||
+      (p.cpf || "").includes(query) ||
+      (p.phone || "").includes(query) ||
+      (p.email || "").toLowerCase().includes(query);
   });
 
   // Consultas no Perfil do Prontuário do Paciente Ativo
@@ -1505,11 +1505,23 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                             alertBadgesList.push(<span key="diabetes" className="badge badge-orange"><Droplet /> Diabetes</span>);
                           }
 
+                          const patientSub = [
+                            patient.gender || null,
+                            patient.dob ? `${calculateAge(patient.dob)} anos` : null
+                          ].filter(Boolean).join(" • ");
+
                           return (
                             <tr key={patient.id}>
-                              <td><strong>{patient.name}</strong><br /><small className="text-muted">{patient.gender} • {calculateAge(patient.dob)} anos</small></td>
-                              <td><code>{patient.cpf}</code></td>
-                              <td>{patient.phone}<br /><small className="text-muted">{patient.email}</small></td>
+                              <td>
+                                <strong>{patient.name}</strong>
+                                {patientSub && <br />}
+                                {patientSub && <small className="text-muted">{patientSub}</small>}
+                              </td>
+                              <td>{patient.cpf ? <code>{patient.cpf}</code> : <span className="text-muted" style={{ fontSize: "0.8rem" }}>Não informado</span>}</td>
+                              <td>
+                                {patient.phone ? patient.phone : <span className="text-muted" style={{ fontSize: "0.8rem" }}>Sem telefone</span>}
+                                {patient.email && <><br /><small className="text-muted">{patient.email}</small></>}
+                              </td>
                               <td>
                                 <div style={{ display: "flex", gap: "0.25rem", flexWrap: "wrap" }}>
                                   {alertBadgesList.length > 0 ? alertBadgesList : <span className="text-muted" style={{ fontSize: "0.8rem" }}>Sem restrições</span>}
@@ -1846,32 +1858,32 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     <input type="text" id="patient-name" className="form-control" required placeholder="Ex: João da Silva" value={pName} onChange={(e) => setPName(e.target.value)} />
                   </div>
                   <div className="form-group col">
-                    <label htmlFor="patient-cpf">CPF *</label>
-                    <input type="text" id="patient-cpf" className="form-control" required placeholder="Ex: 000.000.000-00" value={pCpf} onChange={(e) => setPCpf(e.target.value)} />
+                    <label htmlFor="patient-cpf">CPF</label>
+                    <input type="text" id="patient-cpf" className="form-control" placeholder="Ex: 000.000.000-00 (Opcional)" value={pCpf} onChange={(e) => setPCpf(e.target.value)} />
                   </div>
                 </div>
                 <div className="form-row">
                   <div className="form-group col">
-                    <label htmlFor="patient-dob">Data de Nascimento *</label>
-                    <input type="date" id="patient-dob" className="form-control" required value={pDob} onChange={(e) => setPDob(e.target.value)} />
+                    <label htmlFor="patient-dob">Data de Nascimento</label>
+                    <input type="date" id="patient-dob" className="form-control" value={pDob} onChange={(e) => setPDob(e.target.value)} />
                   </div>
                   <div className="form-group col">
-                    <label htmlFor="patient-gender">Gênero *</label>
-                    <select id="patient-gender" className="form-select" required value={pGender} onChange={(e) => setPGender(e.target.value)}>
-                      <option value="">Selecione...</option>
+                    <label htmlFor="patient-gender">Gênero</label>
+                    <select id="patient-gender" className="form-select" value={pGender} onChange={(e) => setPGender(e.target.value)}>
+                      <option value="">Selecione... (Opcional)</option>
                       <option value="Masculino">Masculino</option>
                       <option value="Feminino">Feminino</option>
                       <option value="Outro">Outro</option>
                     </select>
                   </div>
                   <div className="form-group col">
-                    <label htmlFor="patient-phone">Telefone/WhatsApp *</label>
-                    <input type="tel" id="patient-phone" className="form-control" required placeholder="Ex: (11) 99999-9999" value={pPhone} onChange={(e) => setPPhone(e.target.value)} />
+                    <label htmlFor="patient-phone">Telefone/WhatsApp</label>
+                    <input type="tel" id="patient-phone" className="form-control" placeholder="Ex: (11) 99999-9999 (Opcional)" value={pPhone} onChange={(e) => setPPhone(e.target.value)} />
                   </div>
                 </div>
                 <div className="form-group">
-                  <label htmlFor="patient-email">E-mail *</label>
-                  <input type="email" id="patient-email" className="form-control" required placeholder="Ex: joao@email.com" value={pEmail} onChange={(e) => setPEmail(e.target.value)} />
+                  <label htmlFor="patient-email">E-mail</label>
+                  <input type="email" id="patient-email" className="form-control" placeholder="Ex: joao@email.com (Opcional)" value={pEmail} onChange={(e) => setPEmail(e.target.value)} />
                 </div>
 
                 <h4 className="form-section-title margin-top">Ficha de Anamnese (Saúde Geral)</h4>
@@ -1930,9 +1942,9 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                   <select id="appointment-patient" className="form-select" required value={appPatient} onChange={(e) => setAppPatient(e.target.value)}>
                     <option value="">Selecione um paciente...</option>
                     {patients
-                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
                       .map(p => (
-                        <option key={p.id} value={p.id}>{p.name} (CPF: {p.cpf})</option>
+                        <option key={p.id} value={p.id}>{p.name}{p.cpf ? ` (CPF: ${p.cpf})` : ""}</option>
                       ))}
                   </select>
                 </div>
@@ -2057,11 +2069,13 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                   </div>
                   <div className="profile-meta">
                     <h4 id="profile-patient-name">{viewingPatient.name}</h4>
-                    <p className="text-muted"><span id="profile-patient-gender">{viewingPatient.gender}</span> — Nascimento: <span id="profile-patient-dob">{formatDate(viewingPatient.dob)}</span></p>
+                    <p className="text-muted">
+                      {viewingPatient.gender || "Gênero não informado"} — Nascimento: {viewingPatient.dob ? formatDate(viewingPatient.dob) : "Não informada"}{viewingPatient.dob ? ` (${calculateAge(viewingPatient.dob)} anos)` : ""}
+                    </p>
                     <div className="profile-contact">
-                      <span><CreditCard /> CPF: <span id="profile-patient-cpf">{viewingPatient.cpf}</span></span>
-                      <span><Phone /> <span id="profile-patient-phone">{viewingPatient.phone}</span></span>
-                      <span><Mail /> <span id="profile-patient-email">{viewingPatient.email}</span></span>
+                      <span><CreditCard /> CPF: <span id="profile-patient-cpf">{viewingPatient.cpf || "Não informado"}</span></span>
+                      <span><Phone /> <span id="profile-patient-phone">{viewingPatient.phone || "Não informado"}</span></span>
+                      <span><Mail /> <span id="profile-patient-email">{viewingPatient.email || "Não informado"}</span></span>
                     </div>
                   </div>
                 </div>
