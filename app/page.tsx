@@ -265,6 +265,7 @@ export default function Page() {
   const [appPatient, setAppPatient] = useState("");
   const [appDentist, setAppDentist] = useState("");
   const [appProcedure, setAppProcedure] = useState("");
+  const [appValue, setAppValue] = useState("");
   const [appDate, setAppDate] = useState("");
   const [appTime, setAppTime] = useState("");
   const [appStatus, setAppStatus] = useState("scheduled");
@@ -753,6 +754,10 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   const todayRevenue = todayAppointments
     .filter(a => a.status === "completed" || a.status === "confirmed")
     .reduce((sum, curr) => {
+      if (curr.value !== undefined && curr.value !== null && curr.value !== "") {
+        const parsed = typeof curr.value === "number" ? curr.value : parseFloat(String(curr.value).replace(",", "."));
+        if (!isNaN(parsed)) return sum + parsed;
+      }
       const proc = procedures.find(p => p.id === curr.procedureId);
       return sum + (proc ? proc.price : 0);
     }, 0);
@@ -874,6 +879,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       setAppPatient(apptObj.patientId);
       setAppDentist(apptObj.dentist);
       setAppProcedure(apptObj.procedureId);
+      setAppValue(apptObj.value !== undefined && apptObj.value !== null ? String(apptObj.value) : "");
       setAppDate(apptObj.date);
       setAppTime(apptObj.time);
       setAppStatus(apptObj.status);
@@ -882,6 +888,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       setAppPatient("");
       setAppDentist("");
       setAppProcedure("");
+      setAppValue("");
       setAppDate(dateStr || today);
       setAppTime("");
       setAppStatus("scheduled");
@@ -999,7 +1006,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     if (editingAppointment) {
       updatedList = appointments.map(a => {
         if (a.id === editingAppointment.id) {
-          return { ...a, patientId: appPatient, dentist: appDentist, procedureId: appProcedure, date: appDate, time: appTime, status: appStatus };
+          return { ...a, patientId: appPatient, dentist: appDentist, procedureId: appProcedure, value: appValue.trim(), date: appDate, time: appTime, status: appStatus };
         }
         return a;
       });
@@ -1009,6 +1016,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
         patientId: appPatient,
         dentist: appDentist,
         procedureId: appProcedure,
+        value: appValue.trim(),
         date: appDate,
         time: appTime,
         status: appStatus
@@ -1301,13 +1309,16 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     sortedTodayApps.map(app => {
                       const patient = patients.find(p => p.id === app.patientId);
                       const proc = procedures.find(p => p.id === app.procedureId);
+                      const displayVal = app.value !== undefined && app.value !== null && app.value !== ""
+                        ? `R$ ${app.value}`
+                        : (proc ? `R$ ${proc.price.toFixed(2)}` : null);
                       return (
                         <div key={app.id} className="agenda-item">
                           <div className="agenda-item-left">
                             <div className="agenda-time">{app.time}</div>
                             <div className="agenda-info">
                               <h4>{patient ? patient.name : "Paciente Desconhecido"}</h4>
-                              <p>{app.dentist} • {proc ? proc.name : "Procedimento Geral"}</p>
+                              <p>{app.dentist} • {proc ? proc.name : "Procedimento Geral"}{displayVal ? ` • ${displayVal}` : ""}</p>
                             </div>
                           </div>
                           <div>
@@ -1436,13 +1447,16 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     selectedDayApps.map(app => {
                       const patient = patients.find(p => p.id === app.patientId);
                       const proc = procedures.find(p => p.id === app.procedureId);
+                      const displayVal = app.value !== undefined && app.value !== null && app.value !== ""
+                        ? `R$ ${app.value}`
+                        : (proc ? `R$ ${proc.price.toFixed(2)}` : null);
                       return (
                         <div key={app.id} className="agenda-item">
                           <div className="agenda-item-left">
                             <div className="agenda-time">{app.time}</div>
                             <div className="agenda-info">
                               <h4><strong>{patient ? patient.name : "Paciente Desconhecido"}</strong></h4>
-                              <p>{app.dentist} • {proc ? proc.name : "Procedimento Geral"}</p>
+                              <p>{app.dentist} • {proc ? proc.name : "Procedimento Geral"}{displayVal ? ` • ${displayVal}` : ""}</p>
                               <span className={`badge ${statusBadges[app.status]}`} style={{ marginTop: "0.35rem" }}>{statusLabels[app.status]}</span>
                             </div>
                           </div>
@@ -1957,16 +1971,44 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     <option value="Dr. Mateus Santos">Dr. Mateus Santos (Endodontista)</option>
                   </select>
                 </div>
-                <div className="form-group">
-                  <label htmlFor="appointment-procedure">Procedimento *</label>
-                  <select id="appointment-procedure" className="form-select" required value={appProcedure} onChange={(e) => setAppProcedure(e.target.value)}>
-                    <option value="">Selecione um procedimento...</option>
-                    {procedures
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map(pr => (
-                        <option key={pr.id} value={pr.id}>{pr.name} (R$ {pr.price.toFixed(2)})</option>
-                      ))}
-                  </select>
+                <div className="form-row">
+                  <div className="form-group col-2">
+                    <label htmlFor="appointment-procedure">Procedimento *</label>
+                    <select
+                      id="appointment-procedure"
+                      className="form-select"
+                      required
+                      value={appProcedure}
+                      onChange={(e) => {
+                        const selId = e.target.value;
+                        setAppProcedure(selId);
+                        if (selId && !appValue) {
+                          const found = procedures.find(p => p.id === selId);
+                          if (found) {
+                            setAppValue(found.price.toFixed(2));
+                          }
+                        }
+                      }}
+                    >
+                      <option value="">Selecione um procedimento...</option>
+                      {procedures
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map(pr => (
+                          <option key={pr.id} value={pr.id}>{pr.name} (R$ {pr.price.toFixed(2)})</option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="form-group col">
+                    <label htmlFor="appointment-value">Valor (R$)</label>
+                    <input
+                      type="text"
+                      id="appointment-value"
+                      className="form-control"
+                      placeholder="Ex: 150,00 (Opcional)"
+                      value={appValue}
+                      onChange={(e) => setAppValue(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <div className="form-row">
                   <div className="form-group col">
@@ -2113,12 +2155,15 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                       ) : (
                         patientAppointmentsInProfile.map(app => {
                           const proc = procedures.find(p => p.id === app.procedureId);
+                          const apptPrice = app.value !== undefined && app.value !== null && app.value !== ""
+                            ? (typeof app.value === "number" ? app.value.toFixed(2) : app.value)
+                            : (proc ? proc.price.toFixed(2) : "0,00");
                           return (
                             <tr key={app.id}>
                               <td><strong>{formatDate(app.date)}</strong> às {app.time}</td>
                               <td>{app.dentist}</td>
                               <td>{proc ? proc.name : "Procedimento Geral"}</td>
-                              <td>R$ {proc ? proc.price.toFixed(2) : "0,00"}</td>
+                              <td>R$ {apptPrice}</td>
                               <td><span className={`badge ${statusBadges[app.status]}`}>{statusLabels[app.status]}</span></td>
                             </tr>
                           );

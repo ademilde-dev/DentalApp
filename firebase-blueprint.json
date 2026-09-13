@@ -22,6 +22,7 @@
         "date": "string",
         "time": "string",
         "procedure": "string",
+        "value": "string | number (optional consultation value)",
         "notes": "string",
         "status": "string (scheduled | confirmed | completed | cancelled)",
         "createdAt": "timestamp"
