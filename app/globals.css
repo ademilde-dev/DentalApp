@@ -1337,3 +1337,302 @@ body:not(.light-mode) .form-select option {
         height: 4px;
     }
 }
+
+/* ============================================================================
+   Splash screen (rota "/") — Fluxo de entrada
+   ========================================================================== */
+
+.splash-screen {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.splash-screen::before {
+    /* Halo suave na cor primária — profundidade sem pesar no carregamento */
+    content: '';
+    position: absolute;
+    width: 620px;
+    height: 620px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-primary-translucent) 0%, transparent 68%);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.splash-conteudo {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: splash-entrada 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.splash-logo {
+    width: 148px;
+    height: 148px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid var(--color-primary);
+    box-shadow: 0 12px 40px rgba(140, 79, 110, 0.35);
+    background: #e6dce6;
+    margin-bottom: 1.6rem;
+    flex-shrink: 0;
+}
+
+.splash-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.splash-titulo {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
+}
+
+.splash-subtitulo {
+    margin: 0.4rem 0 0;
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    color: var(--color-primary);
+    font-weight: 500;
+}
+
+.splash-carregando {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 2.2rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.splash-spinner {
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--color-primary);
+    animation: splash-girar 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.splash-mensagem {
+    font-family: var(--font-sans);
+}
+
+.splash-rodape {
+    position: absolute;
+    bottom: 1.6rem;
+    z-index: 1;
+}
+
+.splash-rodape p {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+@keyframes splash-girar {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes splash-entrada {
+    from {
+        opacity: 0;
+        transform: translateY(14px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 480px) {
+    .splash-logo {
+        width: 120px;
+        height: 120px;
+    }
+
+    .splash-titulo {
+        font-size: 1.2rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .splash-conteudo {
+        animation: none;
+    }
+
+    .splash-spinner {
+        animation-duration: 2s;
+    }
+}
+
+/* ============================================================================
+   Abas Entrar / Criar conta na tela de login
+   ========================================================================== */
+
+.auth-abas {
+    display: flex;
+    gap: 0.35rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.3rem;
+    margin-bottom: 1.4rem;
+}
+
+.auth-aba {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 0.55rem 0.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    transition: var(--transition-smooth);
+}
+
+.auth-aba:hover {
+    color: var(--text-primary);
+}
+
+.auth-aba.ativa {
+    background: var(--color-primary-translucent);
+    color: var(--color-primary);
+}
+
+.aviso-caixa {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem;
+    font-size: 0.85rem;
+    margin-bottom: 1.1rem;
+    line-height: 1.35;
+}
+
+.aviso-caixa.aviso-erro {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
+
+.aviso-caixa.aviso-info {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #3b82f6;
+}
+
+.aviso-caixa.aviso-sucesso {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #22c55e;
+}
+
+/* Menu de sessão na sidebar (nome + sair) */
+.sessao-card {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-input);
+    margin-bottom: 0.75rem;
+}
+
+.sessao-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--color-primary-translucent);
+    color: var(--color-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-weight: 700;
+    font-size: 0.8rem;
+    font-family: var(--font-sans);
+}
+
+.sessao-dados {
+    min-width: 0;
+    flex: 1;
+}
+
+.sessao-nome {
+    display: block;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sessao-papel {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sessao-sair {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.35rem;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    transition: var(--transition-smooth);
+}
+
+.sessao-sair:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+}
+
+/* ----------------------------------------------------------------------------
+   Spinner inline (botão de login, painel). O projeto usa o design system em
+   globals.css (sem carregar as utilities do Tailwind), então `animate-spin`
+   era CSS inexistente — o ícone aparecia parado. Definido aqui para reaproveitar
+   as classes já usadas no código.
+   -------------------------------------------------------------------------- */
+@keyframes dentalapp-girar {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: dentalapp-girar 0.9s linear infinite;
+}

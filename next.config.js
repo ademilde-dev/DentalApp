@@ -17,7 +17,7 @@ const nextConfig = {
   },
   output: 'standalone',
   transpilePackages: ['motion'],
-  turbopack: {}, // habilita Turbopack sem erro
+  turbopack: { root: __dirname }, // raiz fixa: evita aviso de lockfile fora do repo
   webpack: (config, { dev }) => {
     if (dev && process.env.DISABLE_HMR === 'true') {
       config.watchOptions = {
