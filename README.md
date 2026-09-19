@@ -64,7 +64,7 @@ Verificação e operação:
   cliente); a promoção a dentista é feita pela administradora no banco. Em produção, mantenha o
   cadastro controlado em **Authentication → Providers → Email**.
 - **Supabase → Authentication → URL Configuration:** cadastre as URLs do app (`Site URL` e
-  `Redirect URLs`): `http://localhost:3000/**`, `https://SEU-DOMINIO.vercel.app/**` — sem isso o
+  `Redirect URLs`): `http://localhost:3000/**`, `https://dentalapp2026.vercel.app/**` — sem isso o
   link de confirmação de e-mail e a recuperação de senha não voltam para o app.
 
 ## Painel do Dia (decisões 4A/6A/8A + ações da T6)
@@ -104,9 +104,9 @@ possível — o dado continua no banco e a recepção pode reagendá-lo pelo cad
 1. Faça push do repositório (GitHub: `ademilde-dev/DentalApp`).
 2. Em [vercel.com](https://vercel.com): **Add New… → Project** → importe o repositório.
    **Não** use "Import" de um projeto existente nem reaponte o `odontoapp2026`.
-3. **Project Name:** `dentalapp` → o app responde em `https://dentalapp.vercel.app`.
-   (Se o nome já estiver tomado, use `dentalapp2026` ou `dentalapp-fabiola`; o domínio é definido
-   aqui no import, não no código — nada no repositório depende de um domínio específico.)
+   3. **Project Name:** `dentalapp2026` → o app responde em `https://dentalapp2026.vercel.app`.
+   (O nome `dentalapp` está tomado na Vercel; `dentalapp2026` é o domínio oficial — nada no
+   código depende de um domínio específico.)
 4. Framework Preset: **Next.js** (detectado automaticamente; build `next build`, install
    `npm install`). Root Directory: a raiz do repositório.
 5. **Environment Variables** (Production e Preview):
@@ -119,7 +119,7 @@ possível — o dado continua no banco e a recepção pode reagendá-lo pelo cad
 
 6. **Deploy**. Depois do primeiro deploy:
    - adicione o domínio em **Supabase → Authentication → URL Configuration**
-     (`Site URL` + `Redirect URLs`: `https://dentalapp.vercel.app/**`);
+      (`Site URL` + `Redirect URLs`: `https://dentalapp2026.vercel.app/**`);
    - confirme as variáveis em **Project → Settings → Environment Variables** e faça um
      **Redeploy** se tiver adicionado algo depois do build.
 
@@ -146,4 +146,3 @@ Notas de segurança:
 | `npm run lint` | ESLint |
 | `node scripts/smoke-auth.mjs` | smoke do fluxo de entrada (precisa do servidor no ar) |
 | `node --dns-result-order=ipv4first --env-file=.env.local scripts/smoke-banco-anon.mjs` | smoke da RLS/objetos do banco sem sessão |
-
