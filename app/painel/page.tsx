@@ -69,6 +69,14 @@ import SplashScreen from '../../components/splash-screen';
 import { supabase } from '../../lib/supabase';
 import { definirModoDemo, modoDemoAtivo } from '../../lib/painel-demo';
 import { carregarMeuPerfil, encerrarSessao, inicialDoPerfil, rotuloPapel, type Perfil } from '../../lib/perfil';
+import {
+  carregarPacientes,
+  criarPaciente,
+  atualizarPaciente,
+  excluirPaciente,
+  importarPacientesLocais,
+  type Paciente,
+} from '../../lib/pacientes';
 
 // ==========================================================================
 // DADOS MOCKADOS INICIAIS
@@ -205,9 +213,17 @@ export default function Page() {
   // ==========================================================================
   // ESTADOS PRINCIPAIS
   // ==========================================================================
-  const [patients, setPatients] = useState<any[]>(mockPatients);
+  const [patients, setPatients] = useState<Paciente[]>([]);
   const [appointments, setAppointments] = useState<any[]>(mockAppointments);
   const [procedures, setProcedures] = useState<any[]>(mockProcedures);
+
+  // Pacientes agora vivem no Supabase (lib/pacientes.ts). Enquanto a leitura
+  // inicial nao conclui, a aba mostra o skeleton em vez de mocks.
+  const [pacientesCarregando, setPacientesCarregando] = useState<boolean>(true);
+  const [pacientesErro, setPacientesErro] = useState<string | null>(null);
+  // Cache legado do navegador: alguma ficha ainda nao migrada existe?
+  const [pacientesLegados, setPacientesLegados] = useState<Paciente[]>([]);
+  const [migrandoPacientes, setMigrandoPacientes] = useState<boolean>(false);
 
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [liveDateTime, setLiveDateTime] = useState<Date | null>(null);
@@ -294,6 +310,9 @@ export default function Page() {
     await encerrarSessao();
     router.replace('/login');
   };
+
+  // Somente Recepcao escreve fichas (RLS 2A: dentista tem leitura).
+  const somenteLeituraPacientes = perfil?.role === 'dentista';
 
   const dentists = [
     "Dra. Fabíola Monteiro",
@@ -702,24 +721,111 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Migração Firebase → Supabase (T1): o listener do Firestore (onSnapshot)
-    // foi desativado. O carregamento inicial é 100% local (localStorage, com
-    // fallback para os dados mockados). A leitura/escrita no Supabase entra
-    // nas tarefas T4 (auth) e T5 (Painel do Dia).
+    // Tema continua local; agenda/procedimentos seguem no localStorage nesta
+    // fase. PACIENTES agora vêm do Supabase (só após login real — no modo
+    // demonstração mantemos os mocks locais e nunca tocamos o banco, 7B).
     const localData = {
       procedures: JSON.parse(safeStorage.getItem("of_procedures") || JSON.stringify(mockProcedures)),
-      patients: JSON.parse(safeStorage.getItem("of_patients") || JSON.stringify(mockPatients)),
       appointments: JSON.parse(safeStorage.getItem("of_appointments") || JSON.stringify(mockAppointments))
     };
     const storedTheme = safeStorage.getItem("of_theme");
     document.body.classList.toggle("light-mode", storedTheme === "light");
-    Promise.resolve().then(() => {
+
+    let cancelado = false;
+
+    const lerPacientesDoBanco = async () => {
+      // Demonstração: mocks locais (inclusive of_patients), sem rede.
+      if (modoDemoAtivo()) {
+        const locais: Paciente[] = JSON.parse(safeStorage.getItem("of_patients") || JSON.stringify(mockPatients));
+        if (cancelado) return;
+        setPatients(locais);
+        setPacientesLegados([]);
+        setPacientesErro(null);
+        setPacientesCarregando(false);
+        setProcedures(localData.procedures);
+        setAppointments(localData.appointments);
+        setTheme(storedTheme === "light" ? "light" : "dark");
+        return;
+      }
+
+      setPacientesCarregando(true);
+      const resultado = await carregarPacientes();
+      if (cancelado) return;
+
+      if (resultado.ok) {
+        setPatients(resultado.pacientes);
+        setPacientesErro(null);
+      } else {
+        // Sem sessão/rede: lista vazia + mensagem (nunca mocks silenciosos,
+        // para não confundir "banco vazio" com "falha de leitura").
+        setPatients([]);
+        setPacientesErro(resultado.mensagem);
+      }
+
+      // Migração assistida: há fichas só no navegador? Oferece 1 clique.
+      try {
+        const bruto = safeStorage.getItem("of_patients");
+        const legados: Paciente[] = bruto ? JSON.parse(bruto) : [];
+        const idsNoBanco = new Set(resultado.pacientes.map(p => p.id));
+        const pendentes = Array.isArray(legados)
+          ? legados.filter((p: any) => p && typeof p.name === 'string' && !idsNoBanco.has(p.id))
+          : [];
+        setPacientesLegados(pendentes);
+      } catch {
+        setPacientesLegados([]);
+      }
+
+      setPacientesCarregando(false);
       setProcedures(localData.procedures);
-      setPatients(localData.patients);
       setAppointments(localData.appointments);
       setTheme(storedTheme === "light" ? "light" : "dark");
-    });
+    };
+
+    void lerPacientesDoBanco();
+    return () => { cancelado = true; };
   }, []);
+
+  /** Releitura manual (botão "Recarregar" da aba Pacientes). */
+  const recarregarPacientes = async () => {
+    if (modoDemoAtivo()) return;
+    setPacientesCarregando(true);
+    const resultado = await carregarPacientes();
+    setPacientesCarregando(false);
+    if (resultado.ok) {
+      setPatients(resultado.pacientes);
+      setPacientesErro(null);
+    } else {
+      setPacientesErro(resultado.mensagem);
+      triggerAlert("Pacientes", resultado.mensagem ?? "Não foi possível carregar os pacientes.");
+    }
+  };
+
+  /** Migração 1-clique do cache legado (of_patients) para public.pacientes. */
+  const migrarPacientesLocais = async () => {
+    if (pacientesLegados.length === 0 || migrandoPacientes) return;
+    setMigrandoPacientes(true);
+    const { importados, falhas } = await importarPacientesLocais(pacientesLegados);
+    // Remove do cache só as fichas que entraram (compara por nome+cpf).
+    if (importados > 0) {
+      try {
+        const bruto = safeStorage.getItem("of_patients");
+        const legados: Paciente[] = bruto ? JSON.parse(bruto) : [];
+        const nomesImportados = new Set(pacientesLegados.slice(0, importados).map(p => `${p.name}||${p.cpf}`));
+        safeStorage.setItem("of_patients", JSON.stringify(
+          legados.filter((p: any) => !nomesImportados.has(`${p?.name}||${p?.cpf}`))
+        ));
+      } catch { /* cache ilegível: segue sem limpar */ }
+      setPacientesLegados(prev => prev.slice(importados));
+      await recarregarPacientes();
+    }
+    setMigrandoPacientes(false);
+    triggerAlert(
+      "Migração de pacientes",
+      falhas.length === 0
+        ? `${importados} ficha(s) migrada(s) do navegador para o Supabase.`
+        : `${importados} migrada(s); ${falhas.length} falharam:\n${falhas.join('\n')}`
+    );
+  };
 
   const saveData = async (key: string, data: any) => {
     // Migração Firebase → Supabase (T1): persistência apenas local nesta fase
@@ -919,10 +1025,14 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     });
   };
 
-  const handleSubmitPatient = (e: React.FormEvent) => {
+  const handleSubmitPatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pName.trim()) {
       triggerAlert("Campo Obrigatório", "Por favor, preencha o Nome Completo do paciente.");
+      return;
+    }
+    if (somenteLeituraPacientes) {
+      triggerAlert("Sem permissão", "Seu perfil (Dentista) tem apenas leitura nas fichas. O cadastro é feito pela Recepção.");
       return;
     }
 
@@ -934,31 +1044,48 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       notes: pAnamneseNotes.trim()
     };
 
-    let updatedList;
-    if (editingPatient) {
-      updatedList = patients.map(p => {
-        if (p.id === editingPatient.id) {
-          return { ...p, name: pName.trim(), cpf: pCpf.trim(), dob: pDob, gender: pGender, phone: pPhone.trim(), email: pEmail.trim(), medicalHistory };
-        }
-        return p;
-      });
-    } else {
-      const newPatient = {
-        id: "p_" + Date.now(),
-        name: pName.trim(),
-        cpf: pCpf.trim(),
-        dob: pDob,
-        gender: pGender,
-        phone: pPhone.trim(),
-        email: pEmail.trim(),
-        medicalHistory,
-        clinicalNotes: ""
-      };
-      updatedList = [...patients, newPatient];
+    // Demonstração: segue 100% local (nunca toca o Supabase, 7B).
+    if (modoDemoAtivo()) {
+      const updatedList = editingPatient
+        ? patients.map(p => p.id === editingPatient.id
+            ? { ...p, name: pName.trim(), cpf: pCpf.trim(), dob: pDob, gender: pGender, phone: pPhone.trim(), email: pEmail.trim(), medicalHistory }
+            : p)
+        : [...patients, {
+            id: "p_" + Date.now(), name: pName.trim(), cpf: pCpf.trim(), dob: pDob,
+            gender: pGender, phone: pPhone.trim(), email: pEmail.trim(), medicalHistory, clinicalNotes: "",
+          }];
+      setPatients(updatedList);
+      safeStorage.setItem("of_patients", JSON.stringify(updatedList));
+      setIsPatientModalActive(false);
+      return;
     }
 
-    setPatients(updatedList);
-    saveData("of_patients", updatedList);
+    // Sessão real: cria/atualiza direto em public.pacientes (tempo real).
+    if (editingPatient) {
+      const res = await atualizarPaciente({
+        ...editingPatient,
+        name: pName.trim(), cpf: pCpf.trim(), dob: pDob, gender: pGender,
+        phone: pPhone.trim(), email: pEmail.trim(), medicalHistory,
+      });
+      if (!res.ok || !res.paciente) {
+        triggerAlert("Pacientes", res.mensagem ?? "Não foi possível salvar a ficha.");
+        return;
+      }
+      setPatients(prev => prev.map(p => p.id === res.paciente!.id ? res.paciente! : p));
+      if (viewingPatient?.id === res.paciente.id) {
+        setViewingPatient((v: any) => ({ ...v, ...res.paciente }));
+      }
+    } else {
+      const res = await criarPaciente({
+        name: pName.trim(), cpf: pCpf.trim(), dob: pDob, gender: pGender,
+        phone: pPhone.trim(), email: pEmail.trim(), medicalHistory, clinicalNotes: "",
+      });
+      if (!res.ok || !res.paciente) {
+        triggerAlert("Pacientes", res.mensagem ?? "Não foi possível cadastrar o paciente.");
+        return;
+      }
+      setPatients(prev => [...prev, res.paciente!]);
+    }
     setIsPatientModalActive(false);
   };
 
@@ -1037,24 +1164,41 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     setIsAppointmentModalActive(false);
   };
 
-  const handleSaveClinicalNotes = () => {
+  const handleSaveClinicalNotes = async () => {
     if (!viewingPatient) return;
-    const updatedList = patients.map(p => {
-      if (p.id === viewingPatient.id) {
-        return { ...p, clinicalNotes: clinicalNotes };
-      }
-      return p;
-    });
-    setPatients(updatedList);
-    saveData("of_patients", updatedList);
-    setViewingPatient({ ...viewingPatient, clinicalNotes: clinicalNotes });
-    triggerAlert("Sucesso", "Notas de evolução clínica salvas com sucesso!");
+    if (somenteLeituraPacientes) {
+      triggerAlert("Sem permissão", "Seu perfil (Dentista) tem apenas leitura nas fichas. A evolução é registrada pela Recepção.");
+      return;
+    }
+    // Demonstração: local (7B).
+    if (modoDemoAtivo()) {
+      const updatedList = patients.map(p => p.id === viewingPatient.id ? { ...p, clinicalNotes } : p);
+      setPatients(updatedList);
+      safeStorage.setItem("of_patients", JSON.stringify(updatedList));
+      setViewingPatient({ ...viewingPatient, clinicalNotes });
+      triggerAlert("Sucesso", "Notas de evolução clínica salvas com sucesso!");
+      return;
+    }
+    // Sessão real: a evolução vive em alertas_saude.ficha.notas_clinicas.
+    const res = await atualizarPaciente({ ...viewingPatient, clinicalNotes });
+    if (!res.ok || !res.paciente) {
+      triggerAlert("Pacientes", res.mensagem ?? "Não foi possível salvar a evolução.");
+      return;
+    }
+    setPatients(prev => prev.map(p => p.id === res.paciente!.id ? res.paciente! : p));
+    setViewingPatient({ ...viewingPatient, ...res.paciente });
+    triggerAlert("Sucesso", "Notas de evolução clínica salvas com sucesso no Supabase!");
   };
 
   // ==========================================================================
   // REMOÇÃO DE DADOS E VALIDAÇÕES
   // ==========================================================================
   const handleDeletePatient = (id: string) => {
+    if (somenteLeituraPacientes) {
+      triggerAlert("Sem permissão", "Seu perfil (Dentista) tem apenas leitura nas fichas. A exclusão é feita pela Recepção.");
+      return;
+    }
+    // Agenda local ainda não migrada: bloqueia como antes.
     const hasApps = appointments.some(a => a.patientId === id && a.status !== "canceled");
     if (hasApps) {
       triggerAlert(
@@ -1067,10 +1211,23 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     triggerConfirm(
       "Confirmar Exclusão",
       "Aviso: Isso irá apagar permanentemente a ficha deste paciente e todo o seu histórico médico! Confirmar exclusão?",
-      () => {
-        const updatedList = patients.filter(p => p.id !== id);
-        setPatients(updatedList);
-        saveData("of_patients", updatedList);
+      async () => {
+        // Demonstração: local (7B).
+        if (modoDemoAtivo()) {
+          const updatedList = patients.filter(p => p.id !== id);
+          setPatients(updatedList);
+          safeStorage.setItem("of_patients", JSON.stringify(updatedList));
+          return;
+        }
+        // Sessão real: exclui em public.pacientes (bloqueia se houver
+        // consultas vinculadas — a FK é ON DELETE CASCADE).
+        const res = await excluirPaciente(id);
+        if (!res.ok) {
+          triggerAlert("Pacientes", res.mensagem ?? "Não foi possível excluir o paciente.");
+          return;
+        }
+        setPatients(prev => prev.filter(p => p.id !== id));
+        if (viewingPatient?.id === id) setViewingPatient(null);
       }
     );
   };
@@ -1286,7 +1443,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                 </button>
               </div>
             )}
-            <button id="quick-patient-btn" className="btn btn-primary" onClick={() => openPatientModal()}>
+            <button id="quick-patient-btn" className="btn btn-primary" onClick={() => openPatientModal()} disabled={somenteLeituraPacientes} title={somenteLeituraPacientes ? "Somente leitura (perfil Dentista) — cadastro pela Recepção" : "Cadastrar paciente em public.pacientes"}>
               <UserPlus />
               <span>Cadastrar Paciente</span>
             </button>
@@ -1552,14 +1709,40 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
             </div>
           </section>
 
-          {/* 3. ABA PACIENTES */}
+          {/* 3. ABA PACIENTES — fonte: public.pacientes (tempo real) */}
           <section id="patients-tab" className={`tab-panel ${activeTab === 'patients' ? 'active' : ''}`}>
             <div className="action-bar">
               <div className="search-box">
                 <Search className="search-icon" />
                 <input type="text" id="patients-search-input" placeholder="Buscar pacientes por nome, CPF ou e-mail..." value={patientsSearchInput} onChange={(e) => setPatientsSearchInput(e.target.value)} />
               </div>
+              {!modoDemoAtivo() && (
+                <button className="btn btn-secondary btn-sm" onClick={() => void recarregarPacientes()} disabled={pacientesCarregando} title="Recarregar fichas de public.pacientes">
+                  <RefreshCw /> <span>{pacientesCarregando ? "Carregando..." : "Recarregar"}</span>
+                </button>
+              )}
             </div>
+
+            {/* Migração assistida: fichas que existem só no navegador */}
+            {!modoDemoAtivo() && pacientesLegados.length > 0 && (
+              <div className="card" style={{ marginBottom: "1rem", borderLeft: "4px solid var(--warning, #f59e0b)" }}>
+                <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <AlertTriangle />
+                  <p style={{ margin: 0, flex: "1 1 240px" }}>
+                    {pacientesLegados.length} ficha(s) existe(m) só neste navegador e ainda não está(ão) no Supabase.
+                  </p>
+                  <button className="btn btn-primary btn-sm" onClick={() => void migrarPacientesLocais()} disabled={migrandoPacientes || somenteLeituraPacientes} title={somenteLeituraPacientes ? "Apenas Recepção pode migrar" : "Copiar fichas do navegador para public.pacientes"}>
+                    <UploadCloud /> <span>{migrandoPacientes ? "Migrando..." : "Migrar para o Supabase"}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {pacientesErro && !modoDemoAtivo() && (
+              <div className="card" style={{ marginBottom: "1rem", borderLeft: "4px solid var(--danger, #ef4444)" }}>
+                <p style={{ margin: 0 }}>{pacientesErro}</p>
+              </div>
+            )}
 
             <div className="card table-card">
               <div className="table-responsive">
@@ -1574,7 +1757,16 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     </tr>
                   </thead>
                   <tbody id="patients-table-body">
-                    {filteredPatients.length === 0 ? (
+                    {pacientesCarregando && !modoDemoAtivo() ? (
+                      <tr>
+                        <td colSpan={5}>
+                          <div id="patients-loading-state" className="empty-state">
+                            <RefreshCw className="empty-icon" />
+                            <p>Carregando fichas do Supabase...</p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : filteredPatients.length === 0 ? (
                       <tr>
                         <td colSpan={5}>
                           <div id="patients-empty-state" className="empty-state">
@@ -1623,8 +1815,8 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                               <td className="text-right">
                                 <div className="action-buttons">
                                   <button className="btn btn-icon btn-sm view-patient-profile-btn" title="Ficha / Prontuário" onClick={() => openPatientProfileModal(patient)}><FolderOpen /></button>
-                                  <button className="btn btn-icon btn-sm edit-patient-btn" title="Editar dados" onClick={() => openPatientModal(patient)}><Edit3 /></button>
-                                  <button className="btn btn-icon btn-sm text-red delete-patient-btn" title="Excluir paciente" onClick={() => handleDeletePatient(patient.id)}><Trash2 /></button>
+                                  <button className="btn btn-icon btn-sm edit-patient-btn" title={somenteLeituraPacientes ? "Somente leitura (perfil Dentista)" : "Editar dados"} onClick={() => openPatientModal(patient)} disabled={somenteLeituraPacientes}><Edit3 /></button>
+                                  <button className="btn btn-icon btn-sm text-red delete-patient-btn" title={somenteLeituraPacientes ? "Somente leitura (perfil Dentista)" : "Excluir paciente"} onClick={() => handleDeletePatient(patient.id)} disabled={somenteLeituraPacientes}><Trash2 /></button>
                                 </div>
                               </td>
                             </tr>
