@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CalendarClock,
@@ -9,6 +9,7 @@ import {
   CheckCircle,
   Droplet,
   Heart,
+  Info,
   MessageCircle,
   Phone,
   Pill,
@@ -89,8 +90,59 @@ const BadgeAlertas = ({ alertas }: { alertas: AlertasSaude | null }) => {
       </span>
     );
   }
+  if (alertas.observacoes) {
+    // Observação do cadastro (ex.: "prefere horários à tarde") é contexto útil,
+    // não alerta clínico — entra como texto neutro, sem badge colorido.
+    tags.push(
+      <span key="ob" className="text-muted" style={estiloTag}>
+        <Info size={11} /> {String(alertas.observacoes)}
+      </span>
+    );
+  }
   if (tags.length === 0) return null;
   return <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.4rem' }}>{tags}</div>;
+};
+
+/**
+ * Fallback do botão de WhatsApp quando não existe link wa.me (edge case 6A).
+ *
+ * Separa dois casos que a recepcionista precisa distinguir — os dois levam para
+ * a aba Pacientes, mas o texto diz o que fazer lá:
+ *   - sem telefone no cadastro → "Cadastrar telefone";
+ *   - telefone em formato que o wa.me não aceita (sem DDD, curto demais — o
+ *     sanitizarTelefone() de lib/mensagem.ts devolveu '') → "Corrigir telefone".
+ */
+const BotaoTelefone = ({ temTelefone, irParaPacientes }: { temTelefone: boolean; irParaPacientes: () => void }) => (
+  <button
+    className="btn btn-secondary btn-sm"
+    onClick={irParaPacientes}
+    title={
+      temTelefone
+        ? 'O telefone do cadastro não tem DDD/formato válido para o WhatsApp — corrija na ficha do paciente.'
+        : 'Paciente sem telefone no cadastro — abra a ficha para cadastrar.'
+    }
+    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}
+  >
+    {temTelefone ? <AlertTriangle size={14} /> : <Phone size={14} />}
+    {temTelefone ? 'Corrigir telefone' : 'Cadastrar telefone'}
+  </button>
+);
+
+/** 'YYYY-MM-DDTHH:MM:SS' (RPC) ou 'HH:MM' (demo) → 'HH:MM' para exibir. */
+const formatarHora = (valor?: string): string => {
+  if (!valor) return '';
+  const comData = valor.match(/T(\d{2}:\d{2})/);
+  if (comData) return comData[1];
+  const soHora = valor.match(/^(\d{2}:\d{2})/);
+  return soHora ? soHora[1] : valor;
+};
+
+/** Texto do aviso após uma mudança de status (T6) — o efeito no recall importa. */
+const MENSAGEM_STATUS: Partial<Record<StatusConsulta, string>> = {
+  confirmada: 'Presença confirmada — a consulta de amanhã está confirmada.',
+  concluida: 'Consulta concluída — o retorno entrou na lista de reativações.',
+  cancelada: 'Consulta cancelada — o retorno pendente dela foi anulado.',
+  agendada: 'Consulta reaberta.',
 };
 
 const Secao = ({
@@ -120,7 +172,14 @@ const LinhaVazia = () => (
   </div>
 );
 
-export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () => void }) {
+export default function PainelDoDia({
+  irParaPacientes,
+  /** A aba do Painel do Dia está visível? (habilita a recarga silenciosa de volta) */
+  abaVisivel = true,
+}: {
+  irParaPacientes: () => void;
+  abaVisivel?: boolean;
+}) {
   const [painel, setPainel] = useState<Painel | null>(null);
   const [modo, setModo] = useState<ModoDados>('carregando');
   const [erro, setErro] = useState<ErroPainel | null>(null);
@@ -166,6 +225,28 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
     return () => { ativo = false; };
   }, [aplicarResultado]);
 
+  /**
+   * Recarga silenciosa quando a aba do painel VOLTA a ficar visível (não no
+   * primeiro mount — esse já é coberto pela carga inicial acima).
+   *
+   * Fecha o fluxo 6A: "Cadastrar telefone" → aba Pacientes → salvar → voltar.
+   * Sem isto a linha continuaria oferecendo "Cadastrar telefone" com o número
+   * já cadastrado, e uma consulta cancelada em outra aba seguiria na lista.
+   *
+   * Falha de rede aqui não derruba o painel: mantém o que já está na tela (o
+   * botão "Atualizar" é o retry explícito, com estado de erro visível).
+   */
+  const visivelAntes = useRef(abaVisivel);
+  useEffect(() => {
+    const voltouParaAba = abaVisivel && !visivelAntes.current;
+    visivelAntes.current = abaVisivel;
+    if (!voltouParaAba) return;
+    void (async () => {
+      const { painel: dados } = await carregarPainel();
+      if (dados) aplicarResultado(dados, null);
+    })();
+  }, [abaVisivel, aplicarResultado]);
+
   const usarDemo = () => {
     setPainel(carregarPainelDemo());
     setModo('demo');
@@ -189,6 +270,20 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
           : p
       );
     aplicar('contatado');
+
+    // Modo demonstração: nenhuma escrita vai ao banco (a RLS nega para anon). Sem
+    // esta saída, o update falharia e o badge voltaria a "pendente" — o clique
+    // pareceria não funcionar.
+    if (modo === 'demo') {
+      setAvisoAcao({
+        tipo: 'info',
+        texto:
+          'Demonstração: retorno marcado como "Contatado". No banco real isso inicia o cooldown de 14 dias antes de "Recontatar".',
+      });
+      setMarcando(m => ({ ...m, [retornoId]: false }));
+      return;
+    }
+
     const { erro: falhaUpdate } = await marcarContatado(retornoId);
     if (falhaUpdate) {
       // ex.: dentista não pode atualizar retornos (RLS 2A) → reverte visualmente
@@ -250,12 +345,7 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
 
     setAvisoAcao({
       tipo: 'sucesso',
-      texto:
-        status === 'concluida'
-          ? 'Consulta concluída — o retorno entrou na lista de reativações.'
-          : status === 'cancelada'
-            ? 'Consulta cancelada — o retorno pendente dela foi anulado.'
-            : 'Consulta reaberta.',
+      texto: MENSAGEM_STATUS[status] ?? `Status atualizado para "${ROTULO_STATUS_CONSULTA[status]}".`,
     });
     setAlterando(a => ({ ...a, [consultaId]: false }));
   };
@@ -309,7 +399,7 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
           {modo === 'supabase' && <span className="badge badge-green">Dados ao vivo — Supabase</span>}
           {painel.gerado_em_sp && (
             <span className="text-muted" style={{ fontSize: '0.8rem' }}>
-              Atualizado ({modo === 'demo' ? 'exemplo' : 'banco'}): {painel.gerado_em_sp}
+              Atualizado {modo === 'demo' ? '(exemplo)' : '(RPC do banco)'} às {formatarHora(painel.gerado_em_sp)}
             </span>
           )}
         </div>
@@ -365,15 +455,28 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
                   {c.dentista_nome && <div className="text-muted" style={{ fontSize: '0.8rem', marginTop: '0.2rem' }}>com {c.dentista_nome}</div>}
                   <BadgeAlertas alertas={c.alertas_saude} />
                 </div>
-                {c.tem_telefone && link ? (
-                  <a href={link} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
-                    <MessageCircle size={14} /> Confirmar via WhatsApp
-                  </a>
-                ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={irParaPacientes} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
-                    <Phone size={14} /> Cadastrar telefone
-                  </button>
-                )}
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {c.tem_telefone && link ? (
+                    <a href={link} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
+                      <MessageCircle size={14} /> Confirmar via WhatsApp
+                    </a>
+                  ) : (
+                    <BotaoTelefone temTelefone={c.tem_telefone} irParaPacientes={irParaPacientes} />
+                  )}
+                  {/* Passo 2 do ritual de véspera: o paciente respondeu e a
+                      presença fica registrada no banco. Não mexe no recall. */}
+                  {c.status === 'agendada' && (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      title={EFEITO_NO_RETORNO.confirmada}
+                      disabled={Boolean(alterando[c.consulta_id])}
+                      onClick={() => void alterarStatus(c.consulta_id, 'confirmada')}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap', opacity: alterando[c.consulta_id] ? 0.6 : 1 }}
+                    >
+                      <CheckCircle size={14} /> Marcar confirmada
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })
@@ -424,9 +527,7 @@ export default function PainelDoDia({ irParaPacientes }: { irParaPacientes: () =
                     <MessageCircle size={14} /> {emContato ? 'Recontatar via WhatsApp' : 'Enviar mensagem'}
                   </a>
                 ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={irParaPacientes} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}>
-                    <Phone size={14} /> Cadastrar telefone
-                  </button>
+                  <BotaoTelefone temTelefone={r.tem_telefone} irParaPacientes={irParaPacientes} />
                 )}
               </div>
             );

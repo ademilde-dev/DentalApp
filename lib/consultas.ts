@@ -36,6 +36,7 @@ export const ROTULO_STATUS_CONSULTA: Record<StatusConsulta, string> = {
 export const EFEITO_NO_RETORNO: Partial<Record<StatusConsulta, string>> = {
   concluida: 'Marca como concluída e gera o retorno na lista de reativações (janela do procedimento ou 180 dias).',
   cancelada: 'Cancela a consulta e anula o retorno pendente que ela havia gerado.',
+  confirmada: 'Registra que o paciente confirmou presença (véspera) — não altera o retorno do recall.',
 };
 
 export async function marcarStatusConsulta(

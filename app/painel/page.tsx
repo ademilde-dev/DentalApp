@@ -1302,7 +1302,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
 
           {/* 0. PAINEL DO DIA — tela inicial (fatia mínima do design, decisão C) */}
           <section id="painel-tab" className={`tab-panel ${activeTab === 'painel' ? 'active' : ''}`}>
-            <PainelDoDia irParaPacientes={() => setActiveTab("patients")} />
+            <PainelDoDia irParaPacientes={() => setActiveTab("patients")} abaVisivel={activeTab === 'painel'} />
           </section>
 
           {/* 1. ABA DASHBOARD */}
