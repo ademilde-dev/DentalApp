@@ -30,6 +30,34 @@ if (!isSupabaseConfigured) {
   );
 }
 
+/**
+ * FONTE PRIMÁRIA DE VERDADE (regra):
+ * - Supabase (`public.pacientes`, `public.procedimentos`, `public.consultas`,
+ *   `public.retornos`, `public.perfis`, `public.dentistas`) é a única fonte de
+ *   verdade do sistema de dados do DentalApp.
+ * - O banco hospedado (DentalAppBD, sa-east-1) é o estado durável da aplicação:
+ *   qualquer listagem, cadastro, edição ou exclusão de Pacientes / Procedimentos
+ *   / Consultas deve ocorrer neste banco (ativação / persistência imediata no
+ *   server hospedado, com RLS e triggers no lugar).
+ * - O `localStorage` do navegador é delimitado para estado de interface local:
+ *   preferências visuais, aba ativa, rascunhos de formulário, entre outros.
+ * - Dados locais em memória ou no `localStorage` NÃO devem sobrescrever,
+ *   substituir ou conflitar com os registros retornados pelo Supabase.
+ *   Ouve-se: se o Supabase devolveu um conjunto de registros para a tabela,
+ *   a UI usa esse conjunto; o cache local é usado somente após falha de rede ou
+ *   como draft temporário antes de persistir (mesmo assim, o draft depois é
+ *   descartado ou conflitado com o estado real).
+ * - O cliente Supabase compartilhado (`lib/supabase.ts`) sempre le na origem
+ *   remota; nunca consulta localStorage para decidir qual paciente/procedimento
+ *   existe. O estado transitório drive, aqui, é o localStorage quando necessário
+ *   (acesso desatualizado do Google Drive), não dados normativos.
+ * - Mesmo no modo demo, que não tenta conectar no banco (ver `painel-demo.{ts,mjs}`),
+ *   os dados servem apenas para mock visual; nunca são livros como "decisões de T2
+ *   aplicadas e persistidas"; após o desligamento do demo, o sistema volta a
+ *   consultar o banco.
+ */
+
+
 export const supabase: SupabaseClient = createBrowserClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-anon-key',

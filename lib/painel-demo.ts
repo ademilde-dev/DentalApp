@@ -1,9 +1,10 @@
 /**
  * Modo demonstração do Painel do Dia (T5).
  *
- * Enquanto o login Supabase Auth (T4) não existe, a RPC carregar_painel() nega
- * por RLS/execute. Para o ciclo de validação visual (decisão 7B) o painel cai
- * neste dataset de exemplo — com TODOS os edge cases 6A representados:
+ * Enquanto o login Supabase Auth (T4) não existe, a RPC carregar_painel()
+ * nega por RLS/execute. Para o ciclo de validação visual (decisão 7B) o
+ * painel cai neste dataset de exemplo — com TODOS os edge cases 6A
+ * representados:
  *   - confirmação SEM telefone (botão "cadastrar telefone", wa.me oculto)
  *   - confirmação com telefone (wa.me 1 clique)
  *   - reativação pendente vencida (badge "vencido")
@@ -11,6 +12,15 @@
  *   - agenda de hoje com alertas de saúde visíveis por linha
  *
  * O shape é idêntico ao retorno da RPC — o componente é agnóstico à fonte.
+ *
+ * CONTEXTO DO MODO DEMO:
+ * - O modo demo não tenta conectar no Supabase para listagens reais ou
+ *   qualquer persistência. Ele é uma mock integral composta para mostrar a
+ *   interface; portanto nunca lê/escreve no `localStorage` para dados
+ *   de negócio (pacientes/procedimentos/consultas), e nunca mescla mock com
+ *   fetch real. Ao sair do demo, a UI volta a consultar o banco.
+ * - Isso confirma a delimitação do localStorage: a UI do painel apenas
+ *   intercepta a chamada ao banco e mostra dados falsos; não substitui.
  */
 import type { Painel } from './painel';
 import { COOKIE_MODO_DEMO, COOKIE_MODO_DEMO_MAX_AGE } from './modo-demo-cookie';

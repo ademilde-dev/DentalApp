@@ -1,6 +1,19 @@
 /**
- * Camada de dados do Painel do Dia (T5) — consome a RPC única carregar_painel()
- * (decisão 8A) e o update de retorno para "contatado" (test plan, interação 2).
+ * Camada de dados do Painel do Dia (T5) — consome a RPC única
+ * `carregar_painel()` (decisão 8A) e o update de retorno para "contatado"
+ * (test plan, interação 2).
+ *
+ * CONTRATO DE FONTE DE VERDADE COM O BANCO (decisão):
+ * - O Painel do Dia é uma VIEW específica do Supabase (3 listas em 1 RPC:
+ *   confirmacoes_amanha, reativacoes_semana, agenda_hoje). Ele é o
+ *   ponto de leitura primária daquele dado — persistido diretamente no
+ *   banco, eventualmente com update `marcarContatado` via client Supabase.
+ * - Em caso de falha de leitura (rede, sem sessão, etc.), a UI mostra
+ *   estado claro e oferece retry — NUNCA substitui os registros da
+ *   view por mocks locais ou pelo localStorage. O estado transitório
+ *   local só entra para o mock do modo demonstração, mas apenas como
+ *   interface visual alternativa, SEM pretenção de ser sincronizado com
+ *   o banco (mock detour 7B).
  *
  * Erros são tipados para a UI mostrar estado claro em vez de tela branca
  * (test plan: "Supabase inacessível: mensagem de erro clara").
