@@ -176,9 +176,14 @@ export default function PainelDoDia({
   irParaPacientes,
   /** A aba do Painel do Dia está visível? (habilita a recarga silenciosa de volta) */
   abaVisivel = true,
+  /** Incrementado pelo painel pai após cada agendamento/cancelamento: recarga
+      silenciosa do Painel do Dia mesmo com a aba já visível — atualiza em
+      tempo real a Agenda de Hoje (T6). */
+  recarregarEm = 0,
 }: {
   irParaPacientes: () => void;
   abaVisivel?: boolean;
+  recarregarEm?: number;
 }) {
   const [painel, setPainel] = useState<Painel | null>(null);
   const [modo, setModo] = useState<ModoDados>('carregando');
@@ -246,6 +251,19 @@ export default function PainelDoDia({
       if (dados) aplicarResultado(dados, null);
     })();
   }, [abaVisivel, aplicarResultado]);
+
+  /** Recarga silenciosa NO MONTANTE atual (não depende de toggle de aba).
+   *  Quando o pai incrementa `recarregarEm` (após criar/cancelar consulta)
+   *  a Agenda de Hoje reage em tempo real sem o usuário trocar de aba. */
+  const recargaAnterior = useRef(recarregarEm);
+  useEffect(() => {
+    if (recargaAnterior.current === recarregarEm) return;
+    recargaAnterior.current = recarregarEm;
+    void (async () => {
+      const { painel: dados } = await carregarPainel();
+      if (dados) aplicarResultado(dados, null);
+    })();
+  }, [recarregarEm, aplicarResultado]);
 
   const usarDemo = () => {
     setPainel(carregarPainelDemo());

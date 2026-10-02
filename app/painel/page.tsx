@@ -68,6 +68,20 @@ import PainelDoDia from '../../components/painel-do-dia';
 import SplashScreen from '../../components/splash-screen';
 import { supabase } from '../../lib/supabase';
 import { definirModoDemo, modoDemoAtivo } from '../../lib/painel-demo';
+// Mock de dentistas para o modo demonstração (módulo → estável, sem warning de dep).
+const mockDentists: Dentista[] = [
+  { id: 'demo-dent-1', nome: 'Dra. Fabíola Monteiro', ativo: true },
+  { id: 'demo-dent-2', nome: 'Dr. Carlos Silva', ativo: true },
+  { id: 'demo-dent-3', nome: 'Dr. Mateus Santos', ativo: true },
+];
+
+/** Gera um id local para consultas do modo demonstração (fora do componente, sem warning de pureza). */
+function gerarIdDemo(): string {
+  return 'a_' + Date.now();
+}
+function gerarIdProcedimentoDemo(): string {
+  return 'pr_' + Date.now();
+}
 import { carregarMeuPerfil, encerrarSessao, inicialDoPerfil, rotuloPapel, type Perfil } from '../../lib/perfil';
 import {
   carregarPacientes,
@@ -77,6 +91,23 @@ import {
   importarPacientesLocais,
   type Paciente,
 } from '../../lib/pacientes';
+import {
+  marcarStatusConsulta,
+  carregarConsultas,
+  criarConsulta,
+  atualizarConsulta,
+  type ConsultaAgenda,
+  type StatusConsultaUI,
+  ROTULO_STATUS_CONSULTA,
+} from '../../lib/consultas';
+import { carregarDentistas, type Dentista } from '../../lib/dentistas';
+import {
+  carregarProcedimentos,
+  criarProcedimento,
+  atualizarProcedimento,
+  excluirProcedimento,
+  type Procedimento,
+} from '../../lib/procedimentos';
 
 // ==========================================================================
 // DADOS MOCKADOS INICIAIS
@@ -214,8 +245,14 @@ export default function Page() {
   // ESTADOS PRINCIPAIS
   // ==========================================================================
   const [patients, setPatients] = useState<Paciente[]>([]);
-  const [appointments, setAppointments] = useState<any[]>(mockAppointments);
+  const [appointments, setAppointments] = useState<any[]>([]);
   const [procedures, setProcedures] = useState<any[]>(mockProcedures);
+
+  // Dentistas do banco (real ou mock demo) para o select do modal.
+  const [dentistasDisponiveis, setDentistasDisponiveis] = useState<Dentista[]>([]);
+
+  // Versão de recarga do Painel do Dia (incrementada após cada agendamento).
+  const [versaoPainel, setVersaoPainel] = useState<number>(0);
 
   // Pacientes agora vivem no Supabase (lib/pacientes.ts). Enquanto a leitura
   // inicial nao conclui, a aba mostra o skeleton em vez de mocks.
@@ -314,11 +351,14 @@ export default function Page() {
   // Somente Recepcao escreve fichas (RLS 2A: dentista tem leitura).
   const somenteLeituraPacientes = perfil?.role === 'dentista';
 
-  const dentists = [
-    "Dra. Fabíola Monteiro",
-    "Dr. Carlos Silva",
-    "Dr. Mateus Santos"
-  ];
+  // Somente Recepcao agenda consultas (RLS: consultas_recepcionista_all).
+  const somenteLeituraAgenda = perfil?.role === 'dentista';
+
+  // Nomes dos dentistas para o filtro da agenda e KPIs.
+  const dentistsNames =
+    dentistasDisponiveis.length > 0
+      ? dentistasDisponiveis.map(d => d.nome)
+      : mockDentists.map(d => d.nome);
 
   // Filtros Clínicos
   const [patientsSearchInput, setPatientsSearchInput] = useState<string>("");
@@ -356,12 +396,14 @@ export default function Page() {
 
   // 3. Consulta
   const [appPatient, setAppPatient] = useState("");
+  const [appPatientSearch, setAppPatientSearch] = useState("");
   const [appDentist, setAppDentist] = useState("");
   const [appProcedure, setAppProcedure] = useState("");
   const [appValue, setAppValue] = useState("");
   const [appDate, setAppDate] = useState("");
   const [appTime, setAppTime] = useState("");
   const [appStatus, setAppStatus] = useState("scheduled");
+  const [salvandoConsulta, setSalvandoConsulta] = useState(false);
 
   // 4. Notas Clínicas / Evolução
   const [clinicalNotes, setClinicalNotes] = useState("");
@@ -744,29 +786,37 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
         setPacientesCarregando(false);
         setProcedures(localData.procedures);
         setAppointments(localData.appointments);
+        setDentistasDisponiveis(mockDentists);
         setTheme(storedTheme === "light" ? "light" : "dark");
         return;
       }
 
       setPacientesCarregando(true);
-      const resultado = await carregarPacientes();
+      const [resPacientes, resConsultas, resProcedimentos, resDentistas] = await Promise.all([
+        carregarPacientes(),
+        carregarConsultas(),
+        carregarProcedimentos(),
+        carregarDentistas(),
+      ]);
       if (cancelado) return;
 
-      if (resultado.ok) {
-        setPatients(resultado.pacientes);
+      if (resPacientes.ok) {
+        setPatients(resPacientes.pacientes);
         setPacientesErro(null);
       } else {
-        // Sem sessão/rede: lista vazia + mensagem (nunca mocks silenciosos,
-        // para não confundir "banco vazio" com "falha de leitura").
         setPatients([]);
-        setPacientesErro(resultado.mensagem);
+        setPacientesErro(resPacientes.mensagem);
       }
+
+      if (resConsultas.ok) setAppointments(resConsultas.consultas);
+      if (resProcedimentos.ok) setProcedures(resProcedimentos.procedimentos);
+      if (resDentistas.ok) setDentistasDisponiveis(resDentistas.dentistas);
 
       // Migração assistida: há fichas só no navegador? Oferece 1 clique.
       try {
         const bruto = safeStorage.getItem("of_patients");
         const legados: Paciente[] = bruto ? JSON.parse(bruto) : [];
-        const idsNoBanco = new Set(resultado.pacientes.map(p => p.id));
+        const idsNoBanco = new Set(resPacientes.pacientes.map(p => p.id));
         const pendentes = Array.isArray(legados)
           ? legados.filter((p: any) => p && typeof p.name === 'string' && !idsNoBanco.has(p.id))
           : [];
@@ -776,8 +826,6 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       }
 
       setPacientesCarregando(false);
-      setProcedures(localData.procedures);
-      setAppointments(localData.appointments);
       setTheme(storedTheme === "light" ? "light" : "dark");
     };
 
@@ -989,7 +1037,13 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     if (apptObj) {
       setEditingAppointment(apptObj);
       setAppPatient(apptObj.patientId);
-      setAppDentist(apptObj.dentist);
+      setAppPatientSearch("");
+      // Prioriza o id do dentista (consultas do Supabase); cai no nome (demo/local).
+      const listaDents = dentistasDisponiveis.length > 0 ? dentistasDisponiveis : mockDentists;
+      const dentistaId = apptObj.dentistId
+        ?? (apptObj.dentist ? listaDents.find(d => d.nome === apptObj.dentist)?.id : '')
+        ?? '';
+      setAppDentist(dentistaId);
       setAppProcedure(apptObj.procedureId);
       setAppValue(apptObj.value !== undefined && apptObj.value !== null ? String(apptObj.value) : "");
       setAppDate(apptObj.date);
@@ -998,6 +1052,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     } else {
       setEditingAppointment(null);
       setAppPatient("");
+      setAppPatientSearch("");
       setAppDentist("");
       setAppProcedure("");
       setAppValue("");
@@ -1089,7 +1144,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     setIsPatientModalActive(false);
   };
 
-  const handleSubmitProcedure = (e: React.FormEvent) => {
+  const handleSubmitProcedure = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedPrice = parseFloat(procPrice);
     if (!procName.trim() || isNaN(parsedPrice)) {
@@ -1097,71 +1152,137 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       return;
     }
 
-    let updatedList;
-    if (editingProcedure) {
-      updatedList = procedures.map(p => {
-        if (p.id === editingProcedure.id) {
-          return { ...p, name: procName.trim(), price: parsedPrice };
-        }
-        return p;
-      });
-    } else {
-      const newProc = {
-        id: "pr_" + Date.now(),
-        name: procName.trim(),
-        price: parsedPrice
-      };
-      updatedList = [...procedures, newProc];
+    // Demonstração: local (7B).
+    if (modoDemoAtivo()) {
+      let updatedList;
+      if (editingProcedure) {
+        updatedList = procedures.map(p => {
+          if (p.id === editingProcedure.id) {
+            return { ...p, name: procName.trim(), price: parsedPrice };
+          }
+          return p;
+        });
+      } else {
+        const newProc = {
+          id: gerarIdProcedimentoDemo(),
+          name: procName.trim(),
+          price: parsedPrice,
+        };
+        updatedList = [...procedures, newProc];
+      }
+      setProcedures(updatedList);
+      saveData("of_procedures", updatedList);
+      setIsProcedureModalActive(false);
+      return;
     }
 
-    setProcedures(updatedList);
-    saveData("of_procedures", updatedList);
+    // Sessão real: grava em public.procedimentos.
+    const res = editingProcedure
+      ? await atualizarProcedimento(editingProcedure.id, { name: procName.trim(), price: parsedPrice })
+      : await criarProcedimento({ name: procName.trim(), price: parsedPrice });
+
+    if (!res.ok || !res.procedimento) {
+      triggerAlert(
+        res.semPermissao ? "Sem permissão" : "Procedimentos",
+        res.mensagem ?? "Não foi possível salvar o procedimento."
+      );
+      return;
+    }
+    setProcedures(prev =>
+      editingProcedure
+        ? prev.map(p => (p.id === res.procedimento!.id ? res.procedimento! : p))
+        : [...prev, res.procedimento!]
+    );
     setIsProcedureModalActive(false);
   };
 
-  const handleSubmitAppointment = (e: React.FormEvent) => {
+  const handleSubmitAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!appPatient || !appDentist || !appProcedure || !appDate || !appTime || !appStatus) {
       triggerAlert("Campos Incompletos", "Por favor, preencha todos os campos do agendamento.");
       return;
     }
 
+    // Resolve o nome do dentista para checar conflito (o estado usa string; o id é para o banco).
+    const listaDents = dentistasDisponiveis.length > 0 ? dentistasDisponiveis : mockDentists;
+    const nomeDentistaSel = listaDents.find(d => d.id === appDentist)?.nome ?? appDentist;
+
     const apptId = editingAppointment ? editingAppointment.id : "";
-    if (checkScheduleConflict(apptId, appDentist, appDate, appTime)) {
+    if (checkScheduleConflict(apptId, nomeDentistaSel, appDate, appTime)) {
       triggerAlert(
         "Conflito de Horário",
-        `O(A) ${appDentist} já tem uma consulta agendada para o dia ${formatDate(appDate)} às ${appTime}. Por favor, escolha outro horário.`
+        `O(A) ${nomeDentistaSel} já tem uma consulta agendada para o dia ${formatDate(appDate)} às ${appTime}. Por favor, escolha outro horário.`
       );
       return;
     }
 
-    let updatedList;
-    if (editingAppointment) {
-      updatedList = appointments.map(a => {
-        if (a.id === editingAppointment.id) {
-          return { ...a, patientId: appPatient, dentist: appDentist, procedureId: appProcedure, value: appValue.trim(), date: appDate, time: appTime, status: appStatus };
-        }
-        return a;
-      });
-    } else {
-      const newApp = {
-        id: "a_" + Date.now(),
-        patientId: appPatient,
-        dentist: appDentist,
-        procedureId: appProcedure,
-        value: appValue.trim(),
-        date: appDate,
-        time: appTime,
-        status: appStatus
-      };
-      updatedList = [...appointments, newApp];
+    // Demonstração: segue 100% local (7B).
+    if (modoDemoAtivo()) {
+      let updatedList;
+      if (editingAppointment) {
+        updatedList = appointments.map(a => {
+          if (a.id === editingAppointment.id) {
+            return { ...a, patientId: appPatient, dentist: nomeDentistaSel, procedureId: appProcedure, value: appValue.trim(), date: appDate, time: appTime, status: appStatus };
+          }
+          return a;
+        });
+      } else {
+        const newApp = {
+          id: gerarIdDemo(),
+          patientId: appPatient,
+          dentist: nomeDentistaSel,
+          procedureId: appProcedure,
+          value: appValue.trim(),
+          date: appDate,
+          time: appTime,
+          status: appStatus,
+        };
+        updatedList = [...appointments, newApp];
+        setSelectedDateStr(appDate);
+        setCurrentDate(new Date(appDate + "T00:00:00"));
+      }
+      setAppointments(updatedList);
+      saveData("of_appointments", updatedList);
+      setIsAppointmentModalActive(false);
+      return;
+    }
+
+    // Sessão real: grava em public.consultas (fonte de verdade).
+    setSalvandoConsulta(true);
+    const payload = {
+      pacienteId: appPatient,
+      dentistaId: appDentist,
+      procedimentoId: appProcedure,
+      data: appDate,
+      hora: appTime,
+      status: appStatus as StatusConsultaUI,
+    };
+
+    const res = editingAppointment
+      ? await atualizarConsulta(editingAppointment.id, payload)
+      : await criarConsulta(payload);
+
+    if (!res.ok || !res.consulta) {
+      triggerAlert(
+        res.semPermissao ? "Sem permissão" : "Consultas",
+        res.mensagem ?? "Não foi possível salvar a consulta."
+      );
+      setSalvandoConsulta(false);
+      return;
+    }
+
+    // Releitura real para sincronizar o estado local com o banco.
+    const recarregado = await recarregarConsultas();
+    if (!editingAppointment) {
       setSelectedDateStr(appDate);
       setCurrentDate(new Date(appDate + "T00:00:00"));
     }
-
-    setAppointments(updatedList);
-    saveData("of_appointments", updatedList);
     setIsAppointmentModalActive(false);
+    setSalvandoConsulta(false);
+    setVersaoPainel(v => v + 1); // Painel do Dia recarrega em tempo real
+    if (!recarregado) {
+      triggerAlert("Consultas", "Consulta salva, mas não foi possível recarregar a agenda.");
+    }
   };
 
   const handleSaveClinicalNotes = async () => {
@@ -1236,12 +1357,32 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     triggerConfirm(
       "Confirmar Cancelamento",
       "Deseja realmente cancelar/excluir esta consulta da agenda?",
-      () => {
-        const updatedList = appointments.filter(a => a.id !== id);
-        setAppointments(updatedList);
-        saveData("of_appointments", updatedList);
+      async () => {
+        // Demonstração: local (7B).
+        if (modoDemoAtivo()) {
+          const updatedList = appointments.filter(a => a.id !== id);
+          setAppointments(updatedList);
+          saveData("of_appointments", updatedList);
+          return;
+        }
+        // Sessão real: cancela via marcarStatusConsulta (T6: cancelada some da
+        // agenda e anula o retorno pendente originado por ela, se houver).
+        const res = await marcarStatusConsulta(id, 'cancelada');
+        if (!res.ok) {
+          triggerAlert("Consultas", res.mensagem ?? "Não foi possível cancelar a consulta.");
+          return;
+        }
+        await recarregarConsultas();
+        setVersaoPainel(v => v + 1);
       }
     );
+  };
+  
+  /** Releitura silenciosa das consultas (atualiza o estado da agenda). */
+  const recarregarConsultas = async (): Promise<boolean> => {
+    const r = await carregarConsultas();
+    if (r.ok) { setAppointments(r.consultas); return true; }
+    return false;
   };
 
   const handleDeleteProcedure = (id: string) => {
@@ -1257,10 +1398,21 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
     triggerConfirm(
       "Confirmar Exclusão",
       "Tem certeza que deseja remover este procedimento da tabela padrão de preços?",
-      () => {
-        const updatedList = procedures.filter(p => p.id !== id);
-        setProcedures(updatedList);
-        saveData("of_procedures", updatedList);
+      async () => {
+        // Demonstração: local (7B).
+        if (modoDemoAtivo()) {
+          const updatedList = procedures.filter(p => p.id !== id);
+          setProcedures(updatedList);
+          saveData("of_procedures", updatedList);
+          return;
+        }
+        // Sessão real: exclui em public.procedimentos.
+        const res = await excluirProcedimento(id);
+        if (!res.ok) {
+          triggerAlert("Procedimentos", res.mensagem ?? "Não foi possível excluir o procedimento.");
+          return;
+        }
+        setProcedures(prev => prev.filter(p => p.id !== id));
       }
     );
   };
@@ -1281,8 +1433,8 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
       .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
     : [];
 
-  const statusLabels: Record<string, string> = { scheduled: "Agendado", confirmed: "Confirmado", completed: "Concluído", canceled: "Cancelado" };
-  const statusBadges: Record<string, string> = { scheduled: "badge-blue", confirmed: "badge-orange", completed: "badge-green", canceled: "badge-red" };
+  const statusLabels: Record<string, string> = { scheduled: "Agendado", confirmed: "Confirmado", completed: "Concluído", canceled: "Cancelado", missed: "Faltou" };
+  const statusBadges: Record<string, string> = { scheduled: "badge-blue", confirmed: "badge-orange", completed: "badge-green", canceled: "badge-red", missed: "badge-orange" };
 
   // Portão de sessão: sem login → /login; enquanto hidrata → a mesma marca do
   // splash (evita flash de texto solto na transição splash → painel). O proxy.ts
@@ -1447,7 +1599,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
               <UserPlus />
               <span>Cadastrar Paciente</span>
             </button>
-            <button id="quick-appointment-btn" className="btn btn-primary" onClick={() => openAppointmentModal()}>
+            <button id="quick-appointment-btn" className="btn btn-primary" onClick={() => openAppointmentModal()} disabled={somenteLeituraAgenda} title={somenteLeituraAgenda ? "Somente leitura (perfil Dentista) — agendamentos pela Recepção" : "Agendar nova consulta em public.consultas"}>
               <CalendarPlus />
               <span>Agendar Consulta</span>
             </button>
@@ -1459,7 +1611,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
 
           {/* 0. PAINEL DO DIA — tela inicial (fatia mínima do design, decisão C) */}
           <section id="painel-tab" className={`tab-panel ${activeTab === 'painel' ? 'active' : ''}`}>
-            <PainelDoDia irParaPacientes={() => setActiveTab("patients")} abaVisivel={activeTab === 'painel'} />
+            <PainelDoDia irParaPacientes={() => setActiveTab("patients")} abaVisivel={activeTab === 'painel'} recarregarEm={versaoPainel} />
           </section>
 
           {/* 1. ABA DASHBOARD */}
@@ -1640,7 +1792,7 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                           <span className="day-number">{day.dayNumber}</span>
                           <div className="day-indicators">
                             {day.appointments?.map((app: any) => {
-                              const statusColors: Record<string, string> = { scheduled: "bg-blue", confirmed: "bg-orange", completed: "bg-green", canceled: "bg-red" };
+                              const statusColors: Record<string, string> = { scheduled: "bg-blue", confirmed: "bg-orange", completed: "bg-green", canceled: "bg-red", missed: "bg-orange" };
                               return <span key={app.id} className={`dot ${statusColors[app.status]}`} title={app.dentist}></span>;
                             })}
                           </div>
@@ -1661,14 +1813,14 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
               <div className="card day-details-card">
                 <div className="day-details-header">
                   <h3 id="selected-day-title">Consultas em {formatDate(selectedDateStr)}</h3>
-                  <button id="add-appointment-day-btn" className="btn btn-primary btn-sm" onClick={() => openAppointmentModal(selectedDateStr)}>
+                  <button id="add-appointment-day-btn" className="btn btn-primary btn-sm" onClick={() => openAppointmentModal(selectedDateStr)} disabled={somenteLeituraAgenda} title={somenteLeituraAgenda ? "Somente leitura (perfil Dentista) — agendamentos pela Recepção" : "Agendar consulta neste dia"}>
                     <Plus /> Agendar
                   </button>
                 </div>
                 <div className="filter-actions-mini">
                   <select id="agenda-dentist-filter" className="form-select select-sm" value={agendaDentistFilter} onChange={(e) => setAgendaDentistFilter(e.target.value)}>
                     <option value="all">Todos os Dentistas</option>
-                    {dentists.map(dentist => (
+                    {dentistsNames.map(dentist => (
                       <option key={dentist} value={dentist}>{dentist}</option>
                     ))}
                   </select>
@@ -2224,9 +2376,21 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
               <div className="modal-body">
                 <div className="form-group">
                   <label htmlFor="appointment-patient">Selecionar Paciente *</label>
+                  <input
+                    type="text"
+                    id="appointment-patient-search"
+                    className="form-control"
+                    placeholder="Buscar por nome, CPF ou telefone..."
+                    value={appPatientSearch}
+                    onChange={(e) => setAppPatientSearch(e.target.value)}
+                    style={{ marginBottom: "0.4rem" }}
+                  />
                   <select id="appointment-patient" className="form-select" required value={appPatient} onChange={(e) => setAppPatient(e.target.value)}>
                     <option value="">Selecione um paciente...</option>
-                    {patients
+                    {(appPatientSearch.trim()
+                      ? patients.filter(p => `${p.name} ${p.cpf} ${p.phone}`.toLowerCase().includes(appPatientSearch.trim().toLowerCase()))
+                      : [...patients]
+                    )
                       .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
                       .map(p => (
                         <option key={p.id} value={p.id}>{p.name}{p.cpf ? ` (CPF: ${p.cpf})` : ""}</option>
@@ -2237,10 +2401,15 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                   <label htmlFor="appointment-dentist">Dentista Responsável *</label>
                   <select id="appointment-dentist" className="form-select" required value={appDentist} onChange={(e) => setAppDentist(e.target.value)}>
                     <option value="">Selecione um dentista...</option>
-                    <option value="Dra. Fabíola Monteiro">Dra. Fabíola Monteiro (Ortodontia & Estética)</option>
-                    <option value="Dr. Carlos Silva">Dr. Carlos Silva (Clínico Geral)</option>
-                    <option value="Dr. Mateus Santos">Dr. Mateus Santos (Endodontista)</option>
+                    {(dentistasDisponiveis.length > 0 ? dentistasDisponiveis : mockDentists).map(d => (
+                      <option key={d.id} value={d.id}>{d.nome}</option>
+                    ))}
                   </select>
+                  {dentistasDisponiveis.length === 0 && !modoDemoAtivo() && (
+                    <p className="text-muted" style={{ fontSize: "0.78rem", marginTop: "0.35rem" }}>
+                      Nenhum dentista em <code>public.dentistas</code> — rode a migração 0005 (ou peça à administradora).
+                    </p>
+                  )}
                 </div>
                 <div className="form-row">
                   <div className="form-group col-2">
@@ -2315,13 +2484,14 @@ ${patientApps.length === 0 ? '- Nenhuma consulta programada ou realizada para es
                     <option value="scheduled">Agendado</option>
                     <option value="confirmed">Confirmado</option>
                     <option value="completed">Concluído</option>
+                    <option value="missed">Faltou</option>
                     <option value="canceled">Cancelado</option>
                   </select>
                 </div>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setIsAppointmentModalActive(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Confirmar Agendamento</button>
+                <button type="submit" className="btn btn-primary" disabled={salvandoConsulta}>{salvandoConsulta ? "Salvando..." : (editingAppointment ? "Salvar Alterações" : "Confirmar Agendamento")}</button>
               </div>
             </form>
           </div>

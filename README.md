@@ -33,6 +33,9 @@ Executar no **SQL Editor**, nesta ordem:
 2. `supabase/migrations/0002_views_rpc.sql` — RPC `carregar_painel()` (8A)
 3. `supabase/migrations/0003_auth_profiles.sql` — perfil automático (`on_auth_user_created`), campos
    `nome_completo`/`ativo` e bloqueio de acesso no RLS
+4. `supabase/migrations/0004_rpc_acl_hardening.sql` — ACL da RPC `carregar_painel` (fail-closed)
+5. `supabase/migrations/0005_agendamento_consultas.sql` — adiciona `preco` em `procedimentos`,
+   seed idempotente de procedimentos/dentistas, índice por dentista nas consultas.
 
 Verificação e operação:
 
@@ -42,6 +45,8 @@ Verificação e operação:
   consulta cancelada some da agenda (6A)
 - `scripts/smoke-banco-anon.mjs` — smoke da parte anônima: `node --dns-result-order=ipv4first --env-file=.env.local scripts/smoke-banco-anon.mjs`
 - `scripts/smoke-auth.mjs` — smoke do fluxo de entrada (splash, login, proteção de rotas): `node scripts/smoke-auth.mjs` com o servidor no ar
+- `scripts/smoke-pacientes.mjs` — smoke estático da camada de pacientes
+- `scripts/smoke-consultas.mjs` — smoke estático da camada de agendamento (consultas, dentistas, procedimentos)
 - `supabase/dev/criar-usuarios-perfis.sql` — criação de usuários + perfis (recepcionista/dentista)
 
 ## Fluxo de entrada e autenticação
@@ -146,3 +151,4 @@ Notas de segurança:
 | `npm run lint` | ESLint |
 | `node scripts/smoke-auth.mjs` | smoke do fluxo de entrada (precisa do servidor no ar) |
 | `node --dns-result-order=ipv4first --env-file=.env.local scripts/smoke-banco-anon.mjs` | smoke da RLS/objetos do banco sem sessão |
+| `node scripts/smoke-consultas.mjs` | smoke estático do agendamento (consultas, dentistas, procedimentos) |
